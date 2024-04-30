@@ -24,7 +24,7 @@ struct GlobalVariables {
 workflow Globals {
   input {
   GlobalVariables glob ={
-        "ubuntu_docker": "us.gcr.io/cloud-marketplace/google/ubuntu2004",
+        "ubuntu_docker": "gcr.io/cloud-marketplace/google/ubuntu2004",
         "gitc_docker": "us.gcr.io/broad-gotc-prod/genomes-in-the-cloud:2.4.6-1599252698",
         "gitc_jar_path": "/usr/gitc/", 
         "ug_vc_docker": "ultimagenomics/ugvc:v0.21_e373679",
