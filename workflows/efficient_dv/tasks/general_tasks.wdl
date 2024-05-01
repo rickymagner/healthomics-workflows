@@ -86,7 +86,6 @@ task ExtractSampleNameFlowOrder{
     runtime {
         cpu: 1
         memory: "2 GB"
-        preemptible: preemptible_tries
         noAddress: no_address
         docker: docker
     }

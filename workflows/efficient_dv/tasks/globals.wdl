@@ -28,7 +28,7 @@ workflow Globals {
         "gitc_docker": "us.gcr.io/broad-gotc-prod/genomes-in-the-cloud:2.4.6-1599252698",
         "gitc_jar_path": "/usr/gitc/", 
         "ug_vc_docker": "ultimagenomics/ugvc:v0.21_e373679",
-        "broad_gatk_docker": "broadinstitute/gatk:4.2.6.1",
+        "broad_gatk_docker": "broadinstitute/gatk:4.5.0.0",
         "ug_call_variants_docker": "ultimagenomics/call_variants:edv_2.1.1_b0ca4ece",
         "ug_make_examples_docker": "ultimagenomics/make_examples:edv_2.1.1_b0ca4ece",
         "bcftools_docker": "staphb/bcftools:1.19",
