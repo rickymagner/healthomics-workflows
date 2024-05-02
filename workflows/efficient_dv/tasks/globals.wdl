@@ -31,7 +31,7 @@ workflow Globals {
         "broad_gatk_docker": "us.gcr.io/broad-gatk/gatk:4.5.0.0",
         "ug_call_variants_docker": "ultimagenomics/call_variants:edv_2.1.1_b0ca4ece",
         "ug_make_examples_docker": "ultimagenomics/make_examples:edv_2.1.1_b0ca4ece",
-        "bcftools_docker": "staphb/bcftools:1.19",
+        "bcftools_docker": "us.gcr.io/broad-dsde-methods/bcftools:v1.3",
         "ug_control_freec_docker": "ultimagenomics/ug_control_freec:1679a9",
         "ug_gatk_picard_docker": "ultimagenomics/ug_gatk_picard:0.12.2.1",
         "monitoring_script": "s3://ultimagen-workflow-resources-us-east-1/monitoring.sh",
