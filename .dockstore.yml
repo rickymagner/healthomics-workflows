@@ -1,0 +1,5 @@
+version: 1.0
+workflows:
+  - name: EfficientDV
+  - subclass: WDL
+  - primaryDescriptorPath: /workflows/efficient_dv/efficient_dv.wdl
