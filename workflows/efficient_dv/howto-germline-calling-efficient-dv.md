@@ -24,13 +24,15 @@ gs://gcp-public-data--broad-references/hg38/v0/wgs_calling_regions.hg38.interval
 ```
 3. A model checkpoint in ONNX format:
 ```
-gs://concordanz/deepvariant/model/germline/v1.3/model.ckpt-890000.dyn_1500.onnx
+gs://concordanz/deepvariant/model/germline/v1.14/germline-ramp-8128462_shuffle_300K_ckpt_260000.onnx
 ```
 
 or 
 ```
-s3://ultimagen-workflow-resources-us-east-1/deepvariant/model/germline/v1.3/model.ckpt-890000.dyn_1500.onnx
+s3://ultimagen-workflow-resources-us-east-1/deepvariant/model/germline/v1.14/germline-ramp-8128462_shuffle_300K_ckpt_260000.onnx
 ```
+
+**NOTE:** the exact model may differ between use-cases, we recommend consulting with the parameters templates provided to find the exact model
 
 ### Dockers and hardware requirements
 
@@ -38,15 +40,15 @@ The Efficient DV analysis pipeline is split into two docker images:
 
 1. `make_examples` docker - contains binaries for the make_examples and post_process steps. Can be found in:
 ```
-us-central1-docker.pkg.dev/ganymede-331016/ultimagen/make_examples:3.1.8
+us-central1-docker.pkg.dev/ganymede-331016/ultimagen/make_examples:3.2.2
 or
-337532070941.dkr.ecr.us-east-1.amazonaws.com/make_examples:3.1.8
+ultimagenomics/make_examples:3.2.2
 ```
 2. `call_variants` docker - contains binaries for the call_variants step. Can be found in:
 ```
-us-central1-docker.pkg.dev/ganymede-331016/ultimagen/call_variants:2.2.3
+us-central1-docker.pkg.dev/ganymede-331016/ultimagen/call_variants:4.0.0
 or
-337532070941.dkr.ecr.us-east-1.amazonaws.com/call_variants:2.2.3
+ultimagenomics/call_variants:4.0.0
 ```
 
 The make_examples and post_process steps are run on a single CPU. make_examples requires up to 2 GB of memory for each thread. post_process requires 8 GB of memory and runs on a single thread.
@@ -102,6 +104,7 @@ tool \
   --max-reads-per-region 1500 \
   --assembly-min-base-quality 0 \
   --optimal-coverages 50 \
+  --median-coverage <median_coverage> \
   --add-ins-size-channel
 ```
 
@@ -109,7 +112,7 @@ The input cram files and the corresponding index files are provided to `--input`
 
 The `--output` argument is the prefix for the output files (including tfrecords).
 
-The `--optimal-coverages` and `--add-ins-size-channel` are parameters which affect the way images are produced, and should be aligned with the model. `optimal-coverages` is related to how reads are internally downsampled before the image is produced, and `add-ins-size-channel` adds a channel with the length of the insertion.
+The `--optimal-coverages` and `--add-ins-size-channel` are parameters which affect the way images are produced, and should be aligned with the model. `optimal-coverages` is related to how reads are internally downsampled before the image is produced, and `add-ins-size-channel` adds a channel with the length of the insertion. `--median-coverage` provides `make_examples` with the actual sequencing depth of the sample, used alongside `--optimal-coverages` to control read downsampling.
 
 The program will output a sam file with the re-aligned reads unless the argument `--no-realigned-sam` is provided. Note that these files are very large, so provide a large disk space if you want to save the re-aligned reads.
 
@@ -118,7 +121,7 @@ The program will output a sam file with the re-aligned reads unless the argument
 The call_variants step combines the tfrecords from all make_examples jobs. The arguments to the call_variants step are provided as an `.ini`-formatted file. A typical file will look like:
 ```
 [RT classification]
-onnxFileName = model/germline/v1.5/ultima-usb4-pe-germline-model-v1.5.ckpt-380000.onnx
+onnxFileName = model/germline/v1.14/germline-ramp-8128462_shuffle_300K_ckpt_260000.onnx
 useSerializedModel = 1
 trtWorkspaceSizeMB = 2000
 numInferTreadsPerGpu = 2
@@ -127,6 +130,13 @@ gpuid = 0
 
 [debug]
 logFileFolder = .
+
+[ensemble]
+ensembleSize = 7
+randomSeed = 1000
+referenceRows = 5
+sampleHeights = 100
+shuffleAllSamples = false
 
 [general]
 tfrecord = 1
@@ -175,7 +185,7 @@ ug_postproc \
   --dbsnp Homo_sapiens_assembly38.dbsnp138.vcf
 ```
 
-The `bed_annotation_files` are comma-separated list of bed files that are used to annotate the vcf. Description of the bed file is recorded in the INFO field of the vcf. The description can be provided in one of two ways:
+Using `--annotate` together with `--bed_annotation_files` adds annotations to the VCF based on the provided BED files (given as a comma-separated list). A description of each BED file is recorded in the INFO field of the VCF. The description can be specified in one of two ways:
 
 Using a `##INFO` in the header of the bed file. For example:
 ```
@@ -193,7 +203,7 @@ If `##INFO` is not present in the bed file, then a json file with the same name 
 }
 ```
 
-If `--filter` argument is used, the vcf will be filtered based on the criteria in `--filters_file`. In this file, each filter is composed of two lines, the first is the filter name (which will appear in FILTER column of the vcf), and the second is the expression for the filter. The syntax of the expression follows [JEXL filtering expressions](https://gatk.broadinstitute.org/hc/en-us/articles/360035891011-JEXL-filtering-expressions). Below is an example of a filters_file that is typically used. Note that these filters use the EXOME attribute, which is an annotation that was added using a bed file.
+If `--filter` argument is used, the vcf will be filtered based on the criteria in `--filters_file`. In this file, each filter is composed of two lines, the first is the filter name (which will appear in FILTER column of the vcf), and the second is the expression for the filter. The syntax of the expression follows [JEXL filtering expressions](https://gatk.broadinstitute.org/hc/en-us/articles/360035891011-JEXL-filtering-expressions). Below is an example of a filters_file that is typically used. Note that these filters use the EXOME attribute, which is an annotation that was added using a bed file, if there is no annotation named EXOME this filter will fail.
 ```
 LowQualInExome
 QUAL < 16 and VARIANT_TYPE=='h-indel' and not vc.isFiltered() and vc.hasAttribute('EXOME')
@@ -209,6 +219,58 @@ REFLEN > 220 and vc.isFiltered()
 
 dbSNP data can be downloaded from: gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf
 
+### Workflow That Includes Haplotype Data from Pangenomes
+
+As demonstrated by [Asri et al.](https://www.biorxiv.org/content/10.1101/2025.06.05.657102v1), incorporating pangenome-derived personalized haplotype data into sequencing images can significantly improve accuracy. Haplotype information in CRAM format can be generated using the Giraffe alignment workflow described in `how-to-giraffe-alignment.md`.
+
+#### Running `make_examples` with Haplotype Data
+
+Below is the command to generate images that include haplotype data. The key differences from standard variant calling are the addition of `--exp-pangenome-haps haplotypes.cram`, `--min-mapq 1`, and `--cgp-min-mapping-quality 1`:
+
+```bash
+tool \
+  --input input_reads.cram \
+  --cram-index input_reads.cram.crai \
+  --bed interval001.bed \
+  --output 001 \
+  --reference Homo_sapiens_assembly38.fasta \
+  --min-base-quality 5 \
+  --min-mapq 1 \
+  --cgp-min-mapping-quality 1 \
+  --cgp-min-count-snps 2 \
+  --cgp-min-count-hmer-indels 2 \
+  --cgp-min-count-non-hmer-indels 2 \
+  --cgp-min-fraction-snps 0.12 \
+  --cgp-min-fraction-hmer-indels 0.12 \
+  --cgp-min-fraction-non-hmer-indels 0.06 \
+  --cgp-min-fraction-single-strand-non-snps 0.15 \
+  --cgp-min-hmer-plus-one-candidate 7 \
+  --max-reads-per-region 1500 \
+  --assembly-min-base-quality 0 \
+  --gvcf --p-error 0.005 \
+  --optimal-coverages 50 \
+  --median-coverage <median_coverage> \
+  --cycle-examples-min 100000 \
+  --keep-duplicates \
+  --add-ins-size-channel \
+  --exp-pangenome-haps haplotypes.cram
+```
+
+#### Running `call_variants` with Haplotype Data
+
+Variant calling with haplotype data requires a specific model:
+
+```bash
+gs://concordanz/deepvariant/model/germline/v1.15/germline-pangenome-ramp-9003772_shuffle_haplotypes_best.onnx
+```
+
+or
+
+```bash
+s3://ultimagen-workflow-resources-us-east-1/deepvariant/model/germline/v1.15/germline-pangenome-ramp-9003772_shuffle_haplotypes_best.onnx
+```
+
+The post-processing step remains unchanged.
 
 ### Producing a GVCF file
 In case a GVCF is desired, then the commands should be modified in the following ways:

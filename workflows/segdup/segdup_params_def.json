@@ -1,4 +1,8 @@
 {
+    "SegDupAnalysis.DV.ScatterIntervalList.convert_to_bed": {
+        "description": "If true, convert interval_list files to BED format in addition to interval_list format",
+        "optional": true
+    },
     "SegDupAnalysis.DV.allele_frequency_ratio": {
         "description": "Minimal ratio between the allele frequency in tumor and normal for non h indels and snvs, for vcf filtering",
         "optional": true
@@ -43,8 +47,24 @@
         "description": "Minimal base quality for local assembly of haplotypes",
         "optional": true
     },
+    "SegDupAnalysis.DV.ensemble_reference_rows": {
+        "description": "Number of reference rows for ensemble inference",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.ensemble_size": {
+        "description": "Size of the ensemble for inference",
+        "optional": true
+    },
     "SegDupAnalysis.DV.germline_vcf": {
         "description": "Germline vcf file in order to generate haplotypes that incorporate germline variants",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.gq_bins": {
+        "description": "GQ bins to use instead of a fixed resolution (overrides gq_resolution)",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.gq_resolution_override": {
+        "description": "Override for gq resolution (default: 5)",
         "optional": true
     },
     "SegDupAnalysis.DV.h_indel_allele_frequency_ratio": {
@@ -64,7 +84,7 @@
         "optional": true
     },
     "SegDupAnalysis.DV.intervals_string": {
-        "description": "Regions for variant calling, in the format chrom:start-end. Multiple regions are separated by semi-colon. hese regions. Takes precedence over target_intervals. If both are not provided then entire genome is used.",
+        "description": "Regions for variant calling, in the format chrom:start-end. Multiple regions are separated by semi-colon. Takes precedence over override_target_intervals.",
         "optional": true
     },
     "SegDupAnalysis.DV.log_make_examples_progress": {
@@ -77,6 +97,10 @@
     },
     "SegDupAnalysis.DV.min_base_quality": {
         "description": "Minimal base quality for candidate generation",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.min_hmer_plus_one_candidate": {
+        "description": "Minimal hmer length, above which more 1-bp insertion candidates are generated, provided they also meet allele frequency conditions",
         "optional": true
     },
     "SegDupAnalysis.DV.min_read_count_hmer_indels": {
@@ -107,6 +131,10 @@
         "description": "Whether to disable assigning external IP addresses to VMs (relevant for Google)",
         "optional": true
     },
+    "SegDupAnalysis.DV.optimization_level": {
+        "description": "Optimization level for TensorRT engine in call_variants",
+        "optional": true
+    },
     "SegDupAnalysis.DV.output_call_variants_tfrecords": {
         "description": "Output tfrecords from call_variants",
         "optional": true
@@ -119,12 +147,24 @@
         "description": "Basecalling error for reference confidence model in gvcf",
         "optional": true
     },
+    "SegDupAnalysis.DV.pangenome_haplotypes": {
+        "description": "Optional pangenome haplotypes cram file",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.pangenome_haplotypes_index": {
+        "description": "Optional pangenome haplotypes cram index file",
+        "optional": true
+    },
     "SegDupAnalysis.DV.pileup_min_mapping_quality": {
         "description": "Minimal mapping quality to be included in image (the input to the CNN)",
         "optional": true
     },
     "SegDupAnalysis.DV.prioritize_alt_supporting_reads": {
         "description": "Generate an image with all available alt-supporting reads, and only then add non-supporting reads",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.random_seed": {
+        "description": "Random seed for ensemble inference",
         "optional": true
     },
     "SegDupAnalysis.DV.scatter_intervals_break": {
@@ -135,8 +175,16 @@
         "description": "Show background fields in the output vcf. Default: false. Mostly relevant for somatic calling.",
         "optional": true
     },
+    "SegDupAnalysis.DV.shuffle_all_samples": {
+        "description": "Whether to shuffle all samples during inference",
+        "optional": true
+    },
     "SegDupAnalysis.DV.strand_bias_normalization_thresholds": {
         "description": "Thresholds for strand bias normalization. The first value is the lowest strand bias (further from 1:1) to normalize, the second value is the highest strand bias (closest to 1:1) to normalize",
+        "optional": true
+    },
+    "SegDupAnalysis.DV.strong_call_threshold": {
+        "description": "Threshold for boundary call. If ensemble_size > 0 boundary calls will be re-called using ensemble inference",
         "optional": true
     },
     "SegDupAnalysis.DV.ug_call_variants_extra_mem": {
@@ -183,10 +231,6 @@
         "description": "dbSNP reference index file (for annotation)",
         "optional": false
     },
-    "SegDupAnalysis.exome_intervals": {
-        "description": "Exome intervals for variant calling (required for deepVariant, otherwise not important)",
-        "optional": false
-    },
     "SegDupAnalysis.homology_table": {
         "description": "Segmental duplication table (see parascopy), see template",
         "optional": false
@@ -211,6 +255,10 @@
         "description": "Serialized model for variant calling",
         "optional": true
     },
+    "SegDupAnalysis.monitoring_script_input": {
+        "description": "monitoring_script_input",
+        "optional": true
+    },
     "SegDupAnalysis.n_threads": {
         "description": "Number of threads to use",
         "optional": false
@@ -223,8 +271,8 @@
         "description": "Number of preemptible tries",
         "optional": true
     },
-    "SegDupAnalysis.references": {
-        "description": "Reference genome files",
+    "SegDupAnalysis.reference_genome": {
+        "description": "Genome type selector. The workflow currently supports only hg38.",
         "optional": false
     },
     "SegDupAnalysis.segdup_regions": {

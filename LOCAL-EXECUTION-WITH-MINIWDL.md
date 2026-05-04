@@ -191,21 +191,21 @@ Each workflow has different hardware requirements.
 
 The table below lists recommended resources for each workflow, based on the EC2 AWS instance type used for testing.
 
-| Workflow Name (Subdirectory)     |   CPU(s) |   Memory (GiB) | GPU Type / #    | EC2 Instance Type   |
-|:---------------------------------|---------:|---------------:|:----------------|:--------------------|
-| combine_germline_CNV_calls       |       36 |             72 | -               | c5.9xlarge          |
-| controlFREEC_pipeline            |        4 |              8 | -               | c5.xlarge           |
-| efficient_dv                     |        4 |             16 | NVIDIA A10G / 1 | g5.xlarge           |
-| germline_CNV_pipeline            |       36 |             72 | -               | c5.9xlarge          |
-| hla_genotyping                   |       16 |             64 | -               | m5.4xlarge          |
-| mrd_featuremap                   |        4 |              8 | -               | c5.xlarge           |
-| ppmSeq_preprocess                |       36 |             72 | -               | c5.9xlarge          |
-| segdup                           |        4 |             16 | NVIDIA A10G / 1 | g5.xlarge           |
-| single_cell_general              |       36 |             72 | -               | c5.9xlarge          |
-| single_read_snv                  |       16 |             32 | -               | c5.4xlarge          |
-| single_sample_cnmops_CNV_calling |        4 |              8 | -               | c5.xlarge           |
-| structural_variant_pipeline      |       48 |             96 | -               | c5.12xlarge         |
-| trim_align_sort                  |       36 |             72 | -               | c5.9xlarge          |
+| Workflow Name (Subdirectory)   |   CPU(s) |   Memory (GiB) | GPU Type / #    | EC2 Instance Type   |
+|:-------------------------------|---------:|---------------:|:----------------|:--------------------|
+| controlFREEC_pipeline          |        4 |              8 | -               | c5.xlarge           |
+| efficient_dv                   |        4 |             16 | NVIDIA A10G / 1 | g5.xlarge           |
+| germline_CNV_pipeline          |       36 |             72 | -               | c5.9xlarge          |
+| giraffe_alignment              |       32 |            128 | -               | m5a.8xlarge         |
+| hla_genotyping                 |       16 |             64 | -               | m5.4xlarge          |
+| mrd_featuremap                 |        4 |              8 | -               | c5.xlarge           |
+| ppmSeq_preprocess              |       36 |             72 | -               | c5.9xlarge          |
+| pypgx                          |        4 |             16 | NVIDIA A10G / 1 | g5.xlarge           |
+| segdup                         |        4 |             16 | NVIDIA A10G / 1 | g5.xlarge           |
+| single_cell_general            |       36 |             72 | -               | c5.9xlarge          |
+| single_read_snv                |       32 |            128 | NVIDIA T4 / 1   | g4dn.8xlarge        |
+| structural_variant_pipeline    |       48 |             96 | -               | c5.12xlarge         |
+| trim_align_sort                |       36 |             72 | -               | c5.9xlarge          |
 
 ## Running Workflows
 1. Identify workflow and edit input

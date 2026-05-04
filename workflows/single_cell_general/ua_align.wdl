@@ -25,43 +25,49 @@ workflow UAAlignment {
     input {
         Array[File] input_files
         String base_file_name
+        File? ua_index_input  # Optional ua_index from genome resources
         UaParameters ua_parameters
         References? references
-        File cache_tarball
+        File? cache_tarball
         Boolean no_address
         Int preemptible_tries
 
-        #@wv not defined(ua_parameters['ua_index']) -> defined(references)
-        #@wv suffix(ua_parameters['ref_alt']) == '.alt'
+        # Used for running on other clouds (aws)
+        File? monitoring_script_input
+
+        #@wv not defined(ua_index_input) -> defined(references)
+        #@wv defined(references) -> defined(references['ref_alt'])
     }
     call Globals.Globals as Globals
     GlobalVariables global = Globals.global_dockers
 
-    if (! defined(ua_parameters.ua_index)){
+    File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])
+
+    if (! defined(ua_index_input)){
         call AlignTasks.BuildUaIndex {
             input :
                 references          = select_first([references]),
                 preemptible_tries   = preemptible_tries,
                 ua_docker           = global.ua_docker,
-                monitoring_script   = global.monitoring_script, # !FileCoercion
+                monitoring_script   = monitoring_script,
                 no_address          = no_address,
                 dummy_input_for_call_caching = "",
         }
     }
 
-    File ua_index = select_first([ua_parameters.ua_index, BuildUaIndex.ua_index])
+    File ua_index = select_first([ua_index_input, BuildUaIndex.ua_index])
 
     call AlignTasks.AlignWithUA {
         input :
             input_bams              = input_files,
             output_bam_basename     = base_file_name + ".ua.aln",
-            ua_index                = ua_index,                   # pre-built in GCP
-            ref_alt                 = ua_parameters.ref_alt,
+            ua_index                = ua_index,
+            ref_alt                 = select_first([references]).ref_alt,
             extra_args              = ua_parameters.ua_extra_args,
             use_v_aware_alignment   = ua_parameters.v_aware_alignment_flag,
             no_address              = no_address,
             cache_tarball           = cache_tarball,
-            monitoring_script       = global.monitoring_script, # !FileCoercion
+            monitoring_script       = monitoring_script,
             preemptible_tries       = preemptible_tries,
             ua_docker               = global.ua_docker,
             cpu                     = ua_parameters.cpus,
@@ -70,5 +76,6 @@ workflow UAAlignment {
     output {
         Array[File] ua_output_json = AlignWithUA.ua_output_json
         File ua_output_bam         = AlignWithUA.ua_output_bam
+        File? ua_index_build       = BuildUaIndex.ua_index
     }
 }

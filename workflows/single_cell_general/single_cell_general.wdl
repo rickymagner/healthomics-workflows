@@ -64,7 +64,7 @@ import "tasks/general_tasks.wdl" as UGGeneralTasks
 
 workflow SingleCell {
     input {
-        String pipeline_version = "1.23.2" # !UnusedDeclaration
+        String pipeline_version = "1.30.0" # !UnusedDeclaration
 
         File input_file
         String base_file_name
@@ -72,8 +72,8 @@ workflow SingleCell {
         # Trimming and sorting parameters
         TrimAlignSortSteps steps
         Array[File] ref_fastas_cram
-        # References
-        References references
+        # Genome type selector
+        String reference_genome = "hg38"
         # trimmer parameters
         TrimmerParameters trimmer_parameters
         # sorter parameters
@@ -107,12 +107,7 @@ workflow SingleCell {
         #@wv defined(trimmer_parameters) and not 'formats_description' in trimmer_parameters -> 'format' in trimmer_parameters
 
         #@wv 'trim' in steps or 'align' in steps or 'sort' in steps -> (steps['trim'] or steps['align'] or steps['sort'])
-        #@wv defined(references) -> len(references) == 3
-        #@wv suffix(references['ref_fasta']) in {'.fasta', '.fa','.fna'}
-        #@wv suffix(references['ref_dict']) == '.dict'
-        #@wv suffix(references['ref_fasta_index']) == '.fai'
-        #@wv prefix(references['ref_fasta_index']) == references['ref_fasta']
-        #@wv prefix(references['ref_dict']) == prefix(references['ref_fasta'])
+        #@wv reference_genome in {"hg38"}
         
         # Trimmer checks
         #@wv 'trim' in steps and steps['trim'] -> defined(trimmer_parameters)
@@ -123,7 +118,7 @@ workflow SingleCell {
         #@wv not("<!READ GROUP!>" in trimmer_parameters['extra_args'])
 
         # Sort checks
-        #@wv 'sort' in steps and steps['sort'] -> defined(sorter_params))
+        #@wv 'sort' in steps and steps['sort'] -> defined(sorter_params)
 
         # STAR solo validations
         #@wv defined(downstream_analysis) and downstream_analysis == "star_solo" -> defined(star_solo_params)
@@ -207,9 +202,9 @@ workflow SingleCell {
             type: "String",
             category: "optional"
         }
-        references: {
-            help: "References for the workflow",
-            type: "References",
+        reference_genome: {
+            help: "Genome type selector. The workflow currently supports only hg38.",
+            type: "String",
             category: "input_required"
         }
         ref_fastas_cram: {
@@ -297,6 +292,11 @@ workflow SingleCell {
             help: "Single Cell application QC h5 file", 
             category: "output"
         }
+        aggregated_metrics_json: {
+            type: "File",
+            help: "Single Cell application QC json file", 
+            category: "output"
+        }
         trimmer_stats_output: {
             type: "File",
             help: "Trimmer output statistics", 
@@ -367,7 +367,7 @@ workflow SingleCell {
             input_cram_bam_list     = [input_file],
             base_file_name          = base_file_name,
             steps                   = steps,
-            references              = references,
+            reference_genome             = reference_genome,
             ref_fastas_cram         = ref_fastas_cram,
             trimmer_parameters      = trimmer_parameters,
             sorter_params           = sorter_params,
@@ -492,6 +492,7 @@ workflow SingleCell {
         # SingleCellQc outputs
         File report_html                    = report_html_
         File application_qc_h5          = SingleCellQc.h5
+        File aggregated_metrics_json        = SingleCellQc.json
 
         # Star solo outputs
         StarSoloOutputs? star_solo_outputs = StarSoloWorkflow.outputs

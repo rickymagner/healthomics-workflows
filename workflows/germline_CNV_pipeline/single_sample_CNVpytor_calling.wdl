@@ -20,20 +20,22 @@ version 1.0
 # CHANGELOG in reverse chronological order
 
 import "tasks/globals.wdl" as Globals
+import "tasks/general_tasks.wdl" as UGGeneralTasks
+import "tasks/cnv_calling_tasks.wdl" as CNVTasks
 
 workflow SingleSampleCNVpytorCalling {
 
     input {
-        String pipeline_version = "1.23.2" # !UnusedDeclaration
+        String pipeline_version = "1.30.0" # !UnusedDeclaration
 
         String base_file_name
+        String? sample_name
         File input_bam_file
         File input_bam_file_index
         File reference_genome
         File reference_genome_index
         Array[String] ref_seq_names
-        Int window_length
-        Int mapq
+        Array[Int] window_lengths
         
         Boolean? no_address_override
         Int? preemptible_tries_override
@@ -48,27 +50,32 @@ workflow SingleSampleCNVpytorCalling {
         #@wv suffix(reference_genome) in {'.fasta', '.fa', '.fna'}
         #@wv suffix(reference_genome_index) == '.fai'
 
-        #@wv window_length > 0
         #@wv len(ref_seq_names) > 0
+        #@wv len(window_lengths) > 0
 
     }
 
     meta {
-        description: "Runs single sample germline CNV calling workflow based on [CNVpytor](https://github.com/abyzovlab/CNVpytor)\n</b>"
+        description: "Runs single sample germline CNV calling workflow based on [CNVpytor](https://github.com/abyzovlab/CNVpytor).\n The workflow takes as input a BAM/CRAM file and reference genome fasta file and generates CNV calls in TSV and VCF formats.\n The calls are generated using multiple window sizes to improve robustness of the calls."
         author: "Ultima Genomics"
         WDL_AID: {
             exclude: ["pipeline_version",
                 "monitoring_script_input",
                 "no_address_override",
                 "preemptible_tries_override",
-                "Globals.glob"
+                "Glob.glob"
                 ]}
     }
     parameter_meta {
         base_file_name: {
-            help: "Sample name",
+            help: "Name for the output files, if sample_name not provided - will also be the sample name in the VCF",
             type: "String",
             category: "input_required"
+        }
+        sample_name: {
+            help: "Sample name for the output VCF. if not provided, base_file_name will be used as sample name in the VCF",
+            type: "String",
+            category: "input_optional"
         }
         input_bam_file: {
             help: "Input sample BAM/CRAM file.",
@@ -95,14 +102,9 @@ workflow SingleSampleCNVpytorCalling {
             type: "Array[String]",
             category: "param_required"
         }
-        window_length: {
-            help: "Window length on which the read counts will be aggregated",
-            type: "Int",
-            category: "param_required"
-        }
-        mapq: {
-            help: "Minimum mapping quality for read to be included in the analysis",
-            type: "Int",
+        window_lengths: {
+            help: "Window lengths on which the read counts will be aggregated",
+            type: "Array[Int]",
             category: "param_required"
         }
         cnvpytor_cnv_calls_tsv: {
@@ -110,35 +112,76 @@ workflow SingleSampleCNVpytorCalling {
             type: "File",
             category: "output"
         }
-        
+        cnvpytor_cnv_calls_vcf: {
+            help: "CNVpytor CNV calls in VCF format",
+            type: "File",
+            category: "output"
+        }
+        cnvpytor_cnv_calls_vcf_index: {
+            help: "Index file for the CNVpytor CNV calls VCF",
+            type: "File",
+            category: "output"  
+        }
     }
 
     Int preemptible_tries = select_first([preemptible_tries_override, 1])
     Boolean no_address = select_first([no_address_override, true ])
-    File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])
      
-    call Globals.Globals as Globals
-      GlobalVariables global = Globals.global_dockers
-
+    call Globals.Globals as Glob
+    GlobalVariables global = Glob.global_dockers   #!FileCoercion
     
-    call RunCNVpytor {
+    File monitoring_script = select_first([monitoring_script_input, global.monitoring_script]) #!FileCoercion
+
+    scatter (window_size in window_lengths) {
+        call RunCNVpytor {
+            input:
+                sample_name = select_first([sample_name, base_file_name]),
+                input_bam = input_bam_file,
+                input_bam_index = input_bam_file_index,
+                reference_fasta = reference_genome,
+                reference_fasta_index = reference_genome_index,
+                window_size = window_size,
+                chr_list = ref_seq_names,
+                docker = global.ugbio_cnv_docker,
+                monitoring_script = monitoring_script,
+                no_address = no_address,
+                preemptible_tries = preemptible_tries
+        }
+
+        call CNVTasks.AddCIPOS { 
+            input:
+                input_vcf = RunCNVpytor.cnvpytor_cnv_calls_vcf,
+                base_file_name = base_file_name,
+                window_size = window_size,
+                docker = global.ugbio_cnv_docker,
+                monitoring_script = monitoring_script,
+                no_address = no_address,
+                preemptible_tries = preemptible_tries
+        }
+    }
+
+    call CombineCNVVcfs { 
         input:
-        sample_name = base_file_name,
-        input_bam = input_bam_file,
-        input_bam_index = input_bam_file_index,
-        reference_fasta = reference_genome,
-        reference_fasta_index = reference_genome_index,
-        window_size = window_length,
-        chr_list = ref_seq_names,
-        mapq = mapq,
-        docker = global.ugbio_cnv_docker,
-        monitoring_script = monitoring_script,
-        no_address = no_address,
-        preemptible_tries = preemptible_tries
+            base_file_name = base_file_name,
+            cnv_vcfs = AddCIPOS.output_vcf,
+            reference_fasta_index = reference_genome_index,
+            docker = global.ugbio_cnv_docker,
+            monitoring_script = monitoring_script,
+            no_address = no_address,
+            preemptible_tries = preemptible_tries
+    }
+
+    call UGGeneralTasks.ConcatFiles as CombineTsvs {
+        input:
+            out_file_name = base_file_name + ".cnvpytor.cnv_calls.tsv",
+            files = RunCNVpytor.cnvpytor_cnv_calls_tsv,
+            docker = global.ubuntu_docker,
     }
 
     output {
-        File cnvpytor_cnv_calls_tsv = RunCNVpytor.cnvpytor_cnv_calls_tsv
+        File cnvpytor_cnv_calls_tsv = CombineTsvs.out_merged_file
+        File cnvpytor_cnv_calls_vcf = CombineCNVVcfs.output_vcf
+        File cnvpytor_cnv_calls_vcf_index = CombineCNVVcfs.output_vcf_index
     }
 }
 
@@ -151,7 +194,6 @@ task RunCNVpytor {
         File reference_fasta_index
         Int window_size
         Array[String] chr_list
-        Int mapq
         
         String docker
         File monitoring_script
@@ -182,6 +224,14 @@ task RunCNVpytor {
         cnvpytor -root ~{sample_name}.pytor \
             -call ~{window_size} > ~{sample_name}.pytor.bin~{window_size}.CNVs.1based.tsv
         
+        cnvpytor -root ~{sample_name}.pytor  -view ~{window_size} <<EOF
+                set print_filename ~{sample_name}.~{window_size}.CNV.vcf
+                print calls
+                quit 
+        EOF
+        
+        bcftools view -Oz -o ~{sample_name}.~{window_size}.CNV.vcf.gz ~{sample_name}.~{window_size}.CNV.vcf
+        bcftools index -tf ~{sample_name}.~{window_size}.CNV.vcf.gz
         #making cnvpytor output coordinates 0-based
         awk 'BEGIN {OFS="\t"}
         {
@@ -198,15 +248,53 @@ task RunCNVpytor {
     >>>
     runtime {
         preemptible: preemptible_tries
-        memory: "64 GB"
+        memory: "16 GB"
         disks: "local-disk " + ceil(disk_size) + " HDD"
         docker: docker
         noAddress: no_address
-        cpu: 36
+        cpu: 8
     }
     output {
         File cnvpytor_cnv_calls_tsv = "~{sample_name}.pytor.bin~{window_size}.CNVs.tsv"
+        File cnvpytor_cnv_calls_vcf = "~{sample_name}.~{window_size}.CNV.vcf.gz"
+        File cnvpytor_cnv_calls_vcf_index = "~{sample_name}.~{window_size}.CNV.vcf.gz.tbi"
         File monitoring_log = "monitoring.log"
     }
-    
+}
+
+
+task CombineCNVVcfs {
+    input {
+        String base_file_name
+        Array[File] cnv_vcfs
+        File reference_fasta_index
+        String docker
+        File monitoring_script
+        Boolean no_address
+        Int preemptible_tries
+    }
+    command <<<
+        set -xeo pipefail
+        bash ~{monitoring_script} | tee monitoring.log >&2 &
+
+        combine_cnmops_cnvpytor_cnv_calls concat \
+            --cnvpytor_vcf ~{sep=" " cnv_vcfs} \
+            --output_vcf ~{base_file_name}.cnvpytor.cnv_calls.vcf.gz \
+            --fasta_index ~{reference_fasta_index} \
+            --make_ids_unique
+    >>>
+
+    runtime {
+        preemptible: preemptible_tries
+        memory: "4 GB"
+        disks: "local-disk 4 HDD"
+        docker: docker
+        noAddress: no_address
+        cpu: 1
+    }
+    output {
+        File output_vcf = "~{base_file_name}.cnvpytor.cnv_calls.vcf.gz"
+        File output_vcf_index = "~{base_file_name}.cnvpytor.cnv_calls.vcf.gz.tbi"
+        File monitoring_log = "monitoring.log"
+    }    
 }

@@ -34,10 +34,10 @@ import "tasks/globals.wdl" as Globals
 workflow SingleSampleCnmopsCNVCalling {
 
     input {
-        String pipeline_version = "1.23.2" # !UnusedDeclaration
+        String pipeline_version = "1.30.0" # !UnusedDeclaration
 
         String base_file_name
-
+        String? sample_name
         File? input_bam_file
         File? input_bam_file_index
         File reference_genome      #ref-genome+idx to enable cram as input file
@@ -50,10 +50,9 @@ workflow SingleSampleCnmopsCNVCalling {
         #extenal reads count
         File? input_sample_reads_count
         Array[File]? bed_graph
-        File? genome_windows
 
         File cohort_reads_count_matrix
-        File? merged_cohort_ploidy_file
+        File? ploidy_file
         String? chrX_name
         String? chrY_name
         Boolean? cap_coverage_override
@@ -82,7 +81,6 @@ workflow SingleSampleCnmopsCNVCalling {
         #@wv suffix(reference_genome) in {'.fasta', '.fa', '.fna'}
         #@wv suffix(reference_genome_index) == '.fai'
 
-        #@wv defined(bed_graph) -> defined(genome_windows)
         #@wv defined(bed_graph) -> not(defined(input_sample_reads_count))
         #@wv defined(input_sample_reads_count) -> not(defined(bed_graph))
 
@@ -101,15 +99,20 @@ workflow SingleSampleCnmopsCNVCalling {
                 "monitoring_script_input",
                 "SingleSampleReadsCount.monitoring_script_input",
                 "no_address_override",
-                "Globals.glob",
+                "Glob.glob",
                 "SingleSampleReadsCount.Globals.glob"
                 ]}
     }
     parameter_meta {
         base_file_name: {
-            help: "Sample name",
+            help: "Base name for the output file, if sample_name not provided - will also be the sample name in the VCF",
             type: "String",
             category: "input_required"
+        }
+        sample_name: {
+            help: "Sample name for the output VCF. if not provided, base_file_name will be used as sample name in the VCF",
+            type: "String",
+            category: "input_optional"
         }
         input_bam_file: {
             help: "Input sample BAM/CRAM file. one of the `input_bam_file`, `input_sample_reads_count` or `bed_graph` must be set",
@@ -161,18 +164,13 @@ workflow SingleSampleCnmopsCNVCalling {
             type: "File",
             category: "input_optional"
         }
-        genome_windows: {
-            help: "Bed file of the genome binned to equal sized windows similar to the cohort_reads_count_matrix. if bed_graph input is set, this file must be given. ",
-            type: "File",
-            category: "input_optional"
-        }
         cohort_reads_count_matrix: {
             help : "GenomicRanges object of the cohort reads count matrix in rds file format. default cohort can be found in the template. can be created by cn.mops::getReadCountsFromBAM R function ",
             type: "File",
             category: "input_required"
          }
-        merged_cohort_ploidy_file: {
-            help : "Cohort ploidy file indicating 1 for male and 2 for female, per sample. The number of lines should be the same as the number of samples in cohort + current_sample. if not given, defaults to 2 for all samples.",
+        ploidy_file: {
+            help : "X chromosome ploidy in the cohort. 1 for male and 2 for female, per sample. The number of lines should be the same as the number of samples in cohort + current_sample. if not given, defaults to 2 for all samples.",
             type: "File",
             category: "input_optional"
         }
@@ -246,6 +244,11 @@ workflow SingleSampleCnmopsCNVCalling {
             type: "File",
             category: "output"
         }
+        out_sample_norm_coverage_bed: {
+            help: "Normalized coverage bed file for the sample",
+            type: "File",
+            category: "output"
+        }
         out_sample_reads_count : {
             help: "GenomicRanges object of the sample's reads count in rds file format",
             type: "File",
@@ -276,6 +279,12 @@ workflow SingleSampleCnmopsCNVCalling {
             type: "Array[File]",
             category: "output"
         }
+        sample_norm_read_counts_bed:{
+            help: "Bed file with normalized read counts of the sample",
+            type: "File",
+            category: "output"
+        }
+
         enable_mod_cnv_override:
         {
             help: "whether to call moderate cnvs (Fold-Change~1.5 will be tagged as CN2.5 and Fold-Change~0.7 will be tagged as CN1.5). Default is: False",
@@ -300,10 +309,22 @@ workflow SingleSampleCnmopsCNVCalling {
     Boolean cap_coverage = select_first([cap_coverage_override, false])
     Boolean skip_figure_generation_value = select_first([skip_figure_generation, false])
 
-    call Globals.Globals as Globals
-      GlobalVariables global = Globals.global_dockers
+    call Globals.Globals as Glob
+    GlobalVariables global = Glob.global_dockers
 
-    File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])
+    File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])    #!FileCoercion
+
+    # Always rebin cohort to match workflow window_length
+    # R script handles no-op case when cohort already at correct window size
+    call CnvTasks.RebinCohortReadsCount {
+        input:
+            cohort_reads_count_matrix = cohort_reads_count_matrix,
+            new_window_length = window_length,
+            docker = global.ugbio_cnv_docker,
+            monitoring_script = monitoring_script,
+            no_address = no_address,
+            preemptible_tries = preemptible_tries
+    }
 
     if(skip_reads_count == false) {
         File input_bam = select_first([input_bam_file])
@@ -324,17 +345,27 @@ workflow SingleSampleCnmopsCNVCalling {
         }
     }
 
-    String sample_name = select_first([SingleSampleReadsCount.out_sample_name,base_file_name])
+    String sample_name_defined = select_first([sample_name, SingleSampleReadsCount.out_sample_name,base_file_name])
 
     if(run_convert_bedGraph_to_Granges)
     {
         Array[File] input_bed_graph = select_first([bed_graph])
-        File input_genome_windows = select_first([genome_windows])
+
+        # Extract genome windows from cohort matrix
+        call CnvTasks.ExtractGenomeWindows as ExtractGenomeWindows {
+            input:
+                cohort_reads_count_matrix = RebinCohortReadsCount.rebinned_cohort_reads_count_matrix,
+                docker = global.ugbio_cnv_docker,
+                monitoring_script = monitoring_script,
+                no_address = no_address,
+                preemptible_tries = preemptible_tries
+        }
+
         call CnvTasks.ConvertBedGraphToGranges as ConvertBedGraphToGranges{
         input:
-            sample_name = sample_name,
+            sample_name = sample_name_defined,
             input_bed_graph = input_bed_graph,
-            genome_windows = input_genome_windows,
+            genome_windows = ExtractGenomeWindows.genome_windows,
             genome_file = reference_genome_index,
             docker = global.ugbio_cnv_docker,
             monitoring_script = monitoring_script,
@@ -348,7 +379,7 @@ workflow SingleSampleCnmopsCNVCalling {
     call CnvTasks.AddCountsToCohortMatrix {
         input:
         sample_reads_count = sample_reads_count_file,
-        cohort_reads_count_matrix = cohort_reads_count_matrix,
+        cohort_reads_count_matrix = RebinCohortReadsCount.rebinned_cohort_reads_count_matrix,
         docker = global.ugbio_cnv_docker,
         save_hdf = save_hdf,
         monitoring_script = monitoring_script,
@@ -358,49 +389,88 @@ workflow SingleSampleCnmopsCNVCalling {
 
     call CnvTasks.RunCnmops {
         input:
-        merged_cohort_reads_count_matrix = AddCountsToCohortMatrix.merged_cohort_reads_count_matrix,
-        min_width_value = min_width_value,
-        ploidy = merged_cohort_ploidy_file,
-        chrX_name = chrX_name,
-        chrY_name = chrY_name,
-        cap_coverage = cap_coverage,
-        docker = global.ugbio_cnv_docker,
-        save_hdf = save_hdf,
-        save_csv = save_csv,
-        mod_cnv = enable_mod_cnv,
-        monitoring_script = monitoring_script,
-        no_address = no_address,
-        preemptible_tries = preemptible_tries,
-        parallel = parallel
+            merged_cohort_reads_count_matrix = AddCountsToCohortMatrix.merged_cohort_reads_count_matrix,
+            min_width_value = min_width_value,
+            ploidy = ploidy_file,
+            chrX_name = chrX_name,
+            chrY_name = chrY_name,
+            cap_coverage = cap_coverage,
+            docker = global.ugbio_cnv_docker,
+            save_hdf = save_hdf,
+            save_csv = save_csv,
+            mod_cnv = enable_mod_cnv,
+            monitoring_script = monitoring_script,
+            no_address = no_address,
+            preemptible_tries = preemptible_tries,
+            parallel = parallel
     }
 
-    Array[String] sample_names = [sample_name]
-    call CnvTasks.FilterSampleCnvs {
-        input:
-        cohort_cnvs_csv = RunCnmops.cohort_cnvs_csv,
-        sample_names = sample_names,
-        min_cnv_length = min_cnv_length,
-        intersection_cutoff = intersection_cutoff,
-        cnv_lcr_file = cnv_lcr_file,
-        skip_figure_generation = skip_figure_generation_value,
-        ref_genome_file = reference_genome_index,
-        germline_coverge_rds = sample_reads_count_file,
-        docker = global.ugbio_cnv_docker,
-        monitoring_script = monitoring_script,
-        no_address = no_address,
-        preemptible_tries = preemptible_tries
+    Array[String] sample_names = [sample_name_defined]
+
+    call CnvTasks.ExtractNormalizedReadCount{
+        input: 
+            cohort_reads_count_norm = RunCnmops.cohort_reads_count_norm,
+            sample_names = sample_names,
+            docker = global.ugbio_cnv_docker,
+            monitoring_script = monitoring_script,
+            no_address = no_address,
+            preemptible_tries = preemptible_tries
     }
+
+    call CnvTasks.ProcessCnmopsCnvs {
+        input:
+            cohort_cnvs_csv = RunCnmops.cohort_cnvs_csv,
+            sample_names = sample_names,
+            min_cnv_length = min_cnv_length,
+            intersection_cutoff = intersection_cutoff,
+            cnv_lcr_file = cnv_lcr_file,
+            sample_norm_coverage_file = ExtractNormalizedReadCount.sample_reads_count_bed,
+            cohort_norm_avg_coverage_file = ExtractNormalizedReadCount.cohort_reads_count_bed,
+            skip_figure_generation = skip_figure_generation_value,
+            ref_genome_file = reference_genome_index,
+            germline_coverage_rds = sample_reads_count_file,
+            docker = global.ugbio_cnv_docker,
+            monitoring_script = monitoring_script,
+            no_address = no_address,
+            preemptible_tries = preemptible_tries
+    }
+
+
+
+    scatter (vcf_file in zip(sample_names, ProcessCnmopsCnvs.sample_cnvs_vcf)) {
+        call CnvTasks.AddCIPOS { 
+            input:
+                input_vcf = vcf_file.right,
+                base_file_name = base_file_name,
+                window_size = window_length,
+                docker = global.ugbio_cnv_docker,
+                monitoring_script = monitoring_script,
+                no_address = no_address,
+                preemptible_tries = preemptible_tries
+        }
+
+        call CnvTasks.CnvVcfToBed {
+            input:
+                input_cnv_vcf = AddCIPOS.output_vcf,
+                base_file_name = vcf_file.left,
+                docker = global.ugbio_cnv_docker,
+                monitoring_script = monitoring_script,
+                no_address = no_address,
+                preemptible_tries = preemptible_tries
+        }
+    }
+
     output {
         File out_sample_reads_count = sample_reads_count_file
         File? out_sample_merged_bedGraph = ConvertBedGraphToGranges.merged_bedGraph
         File? out_sample_reads_count_hdf5 = SingleSampleReadsCount.out_reads_count_hdf5
-        Array[File] out_sample_cnvs_bed = FilterSampleCnvs.sample_cnvs_bed
-        Array[File] out_sample_cnvs_vcf = FilterSampleCnvs.sample_cnvs_vcf
-        Array[File] out_sample_cnvs_vcf_index = FilterSampleCnvs.sample_cnvs_vcf_index
-        Array[File] out_sample_cnvs_filtered_bed = FilterSampleCnvs.sample_cnvs_filtered_bed
-        Array[File] out_coverage_plot_files = FilterSampleCnvs.coverage_plot
-        Array[File] out_dup_del_plot_files = FilterSampleCnvs.dup_del_plot
-        Array[File] out_copy_number_plot_files = FilterSampleCnvs.copy_number_plot
+        File out_sample_cnvs_vcf = AddCIPOS.output_vcf[0]
+        File out_sample_cnvs_vcf_index = AddCIPOS.output_vcf_index[0]
+        File out_sample_cnvs_bed = CnvVcfToBed.output_cnv_bed[0]
+        File out_sample_norm_coverage_bed = ExtractNormalizedReadCount.sample_reads_count_bed[0]
+        Array[File] out_coverage_plot_files = ProcessCnmopsCnvs.coverage_plot
+        Array[File] out_dup_del_plot_files = ProcessCnmopsCnvs.dup_del_plot
+        Array[File] out_copy_number_plot_files = ProcessCnmopsCnvs.copy_number_plot
     }
 }
 

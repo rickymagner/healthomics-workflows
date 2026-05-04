@@ -23,44 +23,12 @@
         "description": "Inputs sample windowed coverage stored as GenomicRanges object in rds file. can be calculated using cn.mops::getReadCountsFromBAM R function.  one of the `input_bam_file`, `input_sample_reads_count` or `bed_graph` must be set",
         "optional": true
     },
-    "GermlineCNVPipeline.CnmopsCNVCalling.preemptible_tries_override": {
-        "description": "Number of preemptible tries,default is: 1",
-        "optional": true
-    },
     "GermlineCNVPipeline.CnmopsCNVCalling.save_csv_override": {
         "description": "Whether to save sample reads counts/cohort including sample/cnmops output data in csv format (additionally to RDS format). Default is: False.",
         "optional": true
     },
     "GermlineCNVPipeline.CnmopsCNVCalling.save_hdf_override": {
         "description": "Whether to save sample reads counts/cohort including sample/cnmops output data in hdf5 format (additionally to RDS format). Default is: False.",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.cnvpytor_precent_gaps_threshold_override": {
-        "description": "Threshold for pN (fraction of reference genome gaps (N's) in call region) for cnvpytor calls. default=0.9",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.deletions_length_cutoff_override": {
-        "description": "Minimum length of deletions to be considered without jalign support. default=3000",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.distance_threshold_override": {
-        "description": "Distance threshold for merging CNV calls. default=1500",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.duplication_length_cutoff_for_cnmops_filter_override": {
-        "description": "Minimum length of duplications to be considered for cn.mops calls. default=10000",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.jalign_min_mismatches_override": {
-        "description": "Minimum number of mismatches for jalign to consider a read as supporting a CNV candidate. default=1",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.jalign_written_cutoff_override": {
-        "description": "Minimal number of supporting jaligned reads for deletions. default=1",
-        "optional": true
-    },
-    "GermlineCNVPipeline.CombineGermlineCNVCalls.preemptible_tries_override": {
-        "description": "Number of preemptible tries,default is: 1",
         "optional": true
     },
     "GermlineCNVPipeline.base_file_name": {
@@ -70,6 +38,10 @@
     "GermlineCNVPipeline.bed_graph": {
         "description": "Previously calculated input bedGraph files holding the coverage per base (outputs with the sequencing data).",
         "optional": false
+    },
+    "GermlineCNVPipeline.cloud_provider_override": {
+        "description": "cloud_provider_override",
+        "optional": true
     },
     "GermlineCNVPipeline.cnmops_intersection_cutoff_override": {
         "description": "Intersection cutoff with UG-CNV-LCR regions to filter out CNV calls. Default is:  0.5",
@@ -95,12 +67,8 @@
         "description": "Window length on which the read counts will be aggregated, default value is 500",
         "optional": true
     },
-    "GermlineCNVPipeline.cnvpytor_mapq_override": {
-        "description": "Reads mapping-quality cutoff for coverage aggregation used in cnvpytor, default value is 0",
-        "optional": true
-    },
     "GermlineCNVPipeline.cnvpytor_window_length_override": {
-        "description": "Window length on which the read counts will be aggregated, default value is 500",
+        "description": "Window length on which the read counts will be aggregated, default value is [500,2500]",
         "optional": true
     },
     "GermlineCNVPipeline.cohort_reads_count_matrix": {
@@ -111,13 +79,21 @@
         "description": "Create md5 checksum for requested output files",
         "optional": true
     },
+    "GermlineCNVPipeline.cushion_size": {
+        "description": "Cushion size around CNV breakpoints for split-read analysis and jump alignment analysis",
+        "optional": false
+    },
     "GermlineCNVPipeline.disable_mod_cnv": {
         "description": "whether to call moderate cnvs (Fold-Change~1.5 will be tagged as CN2.5 and Fold-Change~0.7 will be tagged as CN1.5). Default is: True",
         "optional": true
     },
-    "GermlineCNVPipeline.genome_windows": {
-        "description": "Bed file of the genome binned to equal sized windows similar to the cohort_reads_count_matrix.",
-        "optional": false
+    "GermlineCNVPipeline.filtering_model": {
+        "description": "CNV filtering model, default in template, calls are not filtered if not provided",
+        "optional": true
+    },
+    "GermlineCNVPipeline.filtering_model_decision_threshold": {
+        "description": "Decision threshold for the filtering model, default is set in template. Lower- less stringent, Higher- more stringent",
+        "optional": true
     },
     "GermlineCNVPipeline.input_bam_file": {
         "description": "Input sample BAM/CRAM file",
@@ -125,10 +101,6 @@
     },
     "GermlineCNVPipeline.input_bam_file_index": {
         "description": "Input sample BAI/CRAI index file",
-        "optional": false
-    },
-    "GermlineCNVPipeline.merged_cohort_ploidy_file": {
-        "description": "Merged cohort ploidy file in bed format",
         "optional": false
     },
     "GermlineCNVPipeline.monitoring_script_input": {
@@ -139,6 +111,10 @@
         "description": "no_address_override",
         "optional": true
     },
+    "GermlineCNVPipeline.ploidy_file": {
+        "description": "X chromosome ploidy of the cohort and the additional sample. Each sample is represented on a number on a separate row. Ploidy of the default cohort can be found in the template. The last row corresponds to the sample being called",
+        "optional": false
+    },
     "GermlineCNVPipeline.preemptible_tries_override": {
         "description": "preemptible_tries_override",
         "optional": true
@@ -147,16 +123,24 @@
         "description": "Chromosome names for which coverage will be calculated",
         "optional": false
     },
-    "GermlineCNVPipeline.reference_genome": {
-        "description": "Genome fasta file associated with the CRAM file",
-        "optional": false
-    },
-    "GermlineCNVPipeline.reference_genome_index": {
-        "description": "Fai index of the fasta file",
+    "GermlineCNVPipeline.reference": {
+        "description": "Genome reference object",
         "optional": false
     },
     "GermlineCNVPipeline.skip_figure_generation": {
         "description": "Skip CNV calls figure generation. please set to True if reference genome is not hg38. Default is: False",
+        "optional": true
+    },
+    "GermlineCNVPipeline.skip_filtering": {
+        "description": "Whether to skip CNV filtering step, default is False",
+        "optional": false
+    },
+    "GermlineCNVPipeline.sv_calls_vcf": {
+        "description": "SV calls in VCF format (MANTA-like, single record per SV call) to be used for annotation of combined CNV calls, default is empty and annotation is not performed.<br> The input tested is the output of structrual_variant_pipeline.wdl",
+        "optional": true
+    },
+    "GermlineCNVPipeline.sv_calls_vcf_index": {
+        "description": "Index file for the SV calls VCF",
         "optional": true
     },
     "GermlineCNVPipeline.ug_cnv_lcr_file": {

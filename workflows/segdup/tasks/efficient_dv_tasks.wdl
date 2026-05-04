@@ -15,6 +15,8 @@ task UGMakeExamples{
     Array[File] background_cram_index_files
 
     File? germline_vcf
+    File? pangenome_haplotypes
+    File? pangenome_haplotypes_index
 
     Int min_base_quality
     Int pileup_min_mapping_quality
@@ -25,11 +27,14 @@ task UGMakeExamples{
     Float min_fraction_hmer_indels
     Float min_fraction_non_hmer_indels
     Float min_fraction_single_strand_non_snps
+    Int? min_hmer_plus_one_candidate
     Int candidate_min_mapping_quality
     Int max_reads_per_partition
     Int assembly_min_base_quality
     Boolean make_gvcf
     Float p_error = 0
+    Int gq_resolution = 5
+    Array[Int]? gq_bins
     Boolean prioritize_alt_supporting_reads    
     Array[Int] optimal_coverages
     Boolean cap_at_optimal_coverage
@@ -43,6 +48,10 @@ task UGMakeExamples{
     Boolean count_candidates_with_dvtools = false
     Boolean normalize_strand_bias = false
     Array[Float]? strand_bias_normalization_thresholds
+
+    # Pre-calculated median coverage values
+    Int median_coverage
+    Int background_median_coverage
 
     String docker
     File monitoring_script
@@ -96,7 +105,8 @@ task UGMakeExamples{
   Boolean defined_background = length(background_cram_files) > 0
 
   Array[Float] strand_bias_normalization_thresholds_defined = select_first([strand_bias_normalization_thresholds, [0.5,0.5]])
-
+  Array[Int] gq_bins_defined = select_first([gq_bins, []])
+  
   parameter_meta {
       cram_files: {
           localization_optional: true
@@ -114,9 +124,10 @@ task UGMakeExamples{
     if [[ "~{cloud_provider}" != "aws" ]]; then
       gatk --java-options "-Xms2G" PrintReads \
           -I ~{sep=' -I ' cram_files} \
-          -O input.cram \
+          -O /dev/stdout \
           -L ~{interval} \
-          -R ~{references.ref_fasta}
+          -R ~{references.ref_fasta} |\
+      samtools view -C -T ~{references.ref_fasta} -o input.cram --output-fmt-option embed_ref=1 -
 
       samtools index input.cram -@ ~{cpu}
       input=input.cram
@@ -127,9 +138,10 @@ task UGMakeExamples{
       if [[ "~{defined_background}" == "true" ]]; then
         gatk --java-options "-Xms2G" PrintReads \
             -I  ~{sep=' -I ' background_cram_files} \
-            -O background.cram \
+            -O /dev/stdout \
             -L ~{interval} \
-            -R ~{references.ref_fasta}
+            -R ~{references.ref_fasta} |\
+        samtools view -C -T ~{references.ref_fasta} -o background.cram --output-fmt-option embed_ref=1 -
 
         samtools index background.cram -@ ~{cpu}
         background=background.cram
@@ -162,6 +174,13 @@ task UGMakeExamples{
     touch background.cram
     touch background.cram.crai
 
+    # Link the haplotypes cram and index into the same directory, as the tool expects the haplotypes cram and index to be in the same directory with the same prefix as the input cram
+    if [ "~{defined(pangenome_haplotypes)}" == "true" ]
+    then
+      ln -s "~{pangenome_haplotypes}" "$(basename ~{pangenome_haplotypes})"
+      ln -s "~{pangenome_haplotypes_index}" "$(basename ~{pangenome_haplotypes_index})"
+    fi
+
     # Process interval file
     grep -v @ ~{interval} | awk 'BEGIN{OFS="\t"}{print $1,$2-1,$3}' >> interval.bed
 
@@ -187,6 +206,17 @@ task UGMakeExamples{
     #shellcheck disable=SC2034
     st_bias_norm_thresholds_string="--strand-bias-threshold-to-normalize ~{sep=',' strand_bias_normalization_thresholds_defined}"
 
+    gq_bins_str=' --gq-thresholds "~{sep=',' gq_bins_defined}"'
+    gq_resolution_str="--gq-resolution ~{gq_resolution}"
+    if ~{make_gvcf}; then
+      if "~{defined(gq_bins)}" ; then
+        gvcf_extra_args="$gq_bins_str"
+      else
+        gvcf_extra_args="$gq_resolution_str"
+      fi
+    else
+      gvcf_extra_args=""
+    fi
     # parallel processing: run the tool in different process, each on a different interval part
     pids=()
     for interval_part in $(find . -name "interval_*.bed" | sort); do
@@ -197,6 +227,8 @@ task UGMakeExamples{
         --output "~{output_prefix}_$part_number" \
         --reference ~{references.ref_fasta} \
         --bed "$interval_part" \
+        --median-coverage ~{median_coverage} \
+        --background-median-coverage ~{background_median_coverage} \
         --min-base-quality ~{min_base_quality} \
         --min-mapq ~{pileup_min_mapping_quality} \
         --cgp-min-count-snps ~{min_read_count_snps} \
@@ -207,11 +239,12 @@ task UGMakeExamples{
         --cgp-min-fraction-non-hmer-indels ~{min_fraction_non_hmer_indels} \
         --cgp-min-fraction-single-strand-non-snps ~{min_fraction_single_strand_non_snps} \
         --cgp-min-mapping-quality ~{candidate_min_mapping_quality} \
+        --cgp-min-hmer-plus-one-candidate ~{if defined(min_hmer_plus_one_candidate) then min_hmer_plus_one_candidate else 7} \
         --max-reads-per-region ~{max_reads_per_partition} \
         --assembly-min-base-quality ~{assembly_min_base_quality} \
         ~{true="--realigned-sam" false="" output_realignment} \
         ~{true="--somatic" false="" is_somatic} \
-        ~{if make_gvcf then "--gvcf  --p-error ~{p_error}" else ""} \
+        ~{if make_gvcf then "--gvcf --p-error ~{p_error} $gvcf_extra_args" else ""} \
         --optimal-coverages "~{sep=";" optimal_coverages}" \
         ~{true="--cap-at-optimal-coverage " false="" cap_at_optimal_coverage} \
         ~{true="--prioritize-alt-supporting-reads " false="" prioritize_alt_supporting_reads} \
@@ -225,6 +258,7 @@ task UGMakeExamples{
         ~{extra_args} \
         ~{true="--progress" false="" log_progress} \
         ~{if defined(germline_vcf) then "--region-haplotypes-vcf ~{germline_vcf}" else ""} \
+        ~{if defined(pangenome_haplotypes) then "--exp-pangenome-haps $(basename ~{pangenome_haplotypes})" else ""} \
          &
         
       # Save the PID of the process
@@ -247,15 +281,14 @@ task UGMakeExamples{
 
   if [ ~{output_realignment} == "true" ]
   then
-      # concat the output ~{output_prefix}_hap_out.sam files into one (using samtools)
-      samtools cat -@ ~{cpu} -o ~{output_prefix}_hap_out.sam ~{output_prefix}_*_hap_out.sam | \
-      samtools sort -@ ~{cpu} ~{output_prefix}_hap_out.sam | \
-      samtools view -C -@ ~{cpu} --reference ~{references.ref_fasta} -o ~{output_prefix}_realign.cram
-      samtools index ~{output_prefix}_realign.cram -@ ~{cpu}
-      ls -lh ~{output_prefix}_realign.cram
+      # merge the output ~{output_prefix}_hap_out.sam files into one CRAM file
+      samtools merge -@ ~{cpu} ~{output_prefix}_unsorted.bam ~{output_prefix}_*_hap_out.sam
+      samtools sort -@ ~{cpu} -o ~{output_prefix}_realign.bam ~{output_prefix}_unsorted.bam
+      samtools index ~{output_prefix}_realign.bam -@ ~{cpu}
+      ls -lh ~{output_prefix}_realign.bam
   fi
-  touch "~{output_prefix}_realign.cram"
-  touch "~{output_prefix}_realign.cram.crai"
+  touch "~{output_prefix}_realign.bam"
+  touch "~{output_prefix}_realign.bam.bai"
 
   ls -lh -- *tfrecord*
 
@@ -283,8 +316,8 @@ task UGMakeExamples{
     File input_cram_index = "input.cram.crai"
     File background_cram  = "background.cram"
     File background_cram_index = "background.cram.crai"
-    File realigned_cram = "~{output_prefix}_realign.cram"
-    File realigned_cram_index = "~{output_prefix}_realign.cram.crai"
+    File realigned_cram = "~{output_prefix}_realign.bam"
+    File realigned_cram_index = "~{output_prefix}_realign.bam.bai"
     Array[File] output_examples = glob("~{output_prefix}*[0-9].tfrecord.gz")
     Array[File?] gvcf_records = glob("~{output_prefix}*.gvcf.tfrecord.gz")
     Array[File] output_jsons = glob("~{output_prefix}*.json")
@@ -298,6 +331,7 @@ task UGCallVariants{
     Array[File] examples
     File model_onnx
     File? model_serialized
+    Boolean is_somatic
     String docker
     Int call_variants_uncompr_buf_size_gb
     String gpu_type
@@ -305,12 +339,24 @@ task UGCallVariants{
     Int num_cpus
     Int num_threads
     File monitoring_script
-    Int disk_size = ceil(1.05*size(examples, 'GB') + 10)
     Int? call_variants_extra_mem
+    Int? optimization_level
     Boolean no_address = true
+    
+    # Ensemble parameters
+    Int ensemble_size = 0
+    Int random_seed = 42
+    Int reference_rows = 5
+    
+    # Multi-sample parameters
+    Array[Int] sample_heights  # Height of each sample (e.g., [100,100] or [100])
+    Boolean shuffle_all_samples = false
   }
+
+  Int disk_size = ceil(1.05*size(examples, 'GB') + size(model_onnx, 'GB') + 20)
   Int num_examples = length(examples)
   Int extra_mem = select_first([call_variants_extra_mem, 8])
+  Int builder_optimization_level  = select_first([optimization_level, if is_somatic then 5 else 1])
   Int mem = num_threads * call_variants_uncompr_buf_size_gb + extra_mem
   String onnx_base_name = basename(model_onnx)
   command <<<
@@ -330,6 +376,7 @@ task UGCallVariants{
 
     printf "%b\n" "[RT classification]" \
       "onnxFileName = ~{onnx_base_name}" \
+      "builderOptimizationLevel = ~{builder_optimization_level}" \
       "useSerializedModel = 1" \
       "trtWorkspaceSizeMB = 2000" \
       "numInferTreadsPerGpu = 2" \
@@ -337,6 +384,12 @@ task UGCallVariants{
       "gpuid = 0\n" \
       "[debug]" \
       "logFileFolder = .\n" \
+      "[ensemble]" \
+      "ensembleSize = ~{ensemble_size}" \
+      "randomSeed = ~{random_seed}" \
+      "referenceRows = ~{reference_rows}" \
+      "sampleHeights = ~{sep=',' sample_heights}" \
+      "shuffleAllSamples = ~{true='true' false='false' shuffle_all_samples}\n" \
       "[general]" \
       "tfrecord = 1" \
       "compressed = 1" \
@@ -351,8 +404,9 @@ task UGCallVariants{
 
     call_variants --param params.ini --fp16
 
-    num_candidates=$(grep -oP 'total batch size \K\d+(?= vectors)' call_variants*.log)
-    echo "$num_candidates" > "num_candidates_${num_candidates}"
+    num_candidates_val=$(grep -oP 'total batch size \K\d+(?= vectors)' call_variants*.log)
+    echo "$num_candidates_val" > "num_candidates_${num_candidates_val}"
+    echo "$num_candidates_val" > nc.txt
 
   >>>
   runtime {
@@ -360,7 +414,7 @@ task UGCallVariants{
     cpu: "~{num_cpus}"
     disks: "local-disk " + disk_size + " LOCAL"
     docker: docker
-    gpuType: "nvidia-tesla-p100"
+    gpuType: "nvidia-tesla-t4"
     gpuCount: num_gpus
     acceleratorType : gpu_type #!UnknownRuntimeKey
     acceleratorCount : num_gpus #!UnknownRuntimeKey
@@ -373,9 +427,60 @@ output {
     Array[File] log = glob('call_variants*.log')
     Array[File] output_records = glob('call_variants*.gz')
     Array[File] num_candidates = glob("num_candidates_*")
+    Int num_candidates_as_int = read_int("nc.txt")
     File output_model_serialized = "~{onnx_base_name}.serialized"
   }
 }
+
+task UGSplitBoundaryCalls {
+  input {
+    Array[File] examples
+    Array[File] calls
+    Float boundary_threshold
+    String docker
+    File monitoring_script
+    Int preemptible_tries
+    Boolean no_address
+  }
+  Int disk_size = ceil(1.1*size(examples, 'GB') + 1.1*size(calls, 'GB') + 10)
+  command <<<
+    set -exo pipefail
+    examples_file=~{write_lines(examples)}
+    calls_file=~{write_lines(calls)}
+    
+    bash ~{monitoring_script} | tee monitoring.log >&2 &
+    mkdir boundary_examples
+    mkdir strong_calls
+    sort -t "." -k2,2n $calls_file > sorted_calls.txt
+    paste -d "\t" $examples_file sorted_calls.txt > input_pairs.txt
+    cat input_pairs.txt
+    while IFS=$'\t' read -r example call; do
+      example_basename=$(basename "$example")
+      echo "[$(date +%T)] Processing line $((++line_count)) of $(wc -l < input_pairs.txt)"
+      call_basename=$(basename "$call")
+      dvtools --infile "$call" --op ensembleSplit --filetype cvo \
+      --ensembleSplitThreshold ~{boundary_threshold} \
+      --ensembleSplitInputDV "$example" \
+      --outfile "strong_calls/${call_basename}" \
+      --ensembleSplitOutputDV "boundary_examples/${example_basename}"
+    done < input_pairs.txt
+
+  >>>
+  runtime {
+    memory: "8 GB"
+    disks: "local-disk " + disk_size + " HDD"
+    docker: docker
+    preemptible: preemptible_tries
+    noAddress: no_address
+    cpu: 2
+  }
+  output {
+    Array[File] strong_calls = glob("strong_calls/*.gz")
+    Array[File] boundary_examples = glob("boundary_examples/*.tfrecord.gz")
+    File monitoring_log = "monitoring.log"
+  } 
+}
+
 
 task UGPostProcessing{
   input{
@@ -393,8 +498,8 @@ task UGPostProcessing{
     String output_prefix
     File exome_intervals
     Array[File]? annotation_intervals
-    File dbsnp
-    File dbsnp_index
+    File? dbsnp
+    File? dbsnp_index
     String flow_order
     Int qual_filter
     Array[File]? gvcf_records
@@ -412,10 +517,10 @@ task UGPostProcessing{
 
     Int disk_size = ceil(48 * size(called_records, "GB") +
                          size(ref, "GB") +
-                         size(dbsnp, "GB") +
+                         (if defined(dbsnp) then size(dbsnp, "GB") else 0) +
                          (if make_gvcf then size(select_first([gvcf_records]), "GB") else 0) +
-                         4 + (if make_gvcf then 5 else 0)) + 
-                         ceil(size(background_cram_files, "GB")) + 
+                         4 + (if make_gvcf then 5 else 0)) +
+                         ceil(size(background_cram_files, "GB")) +
                          ceil(size(cram_files, "GB")) +
                          ceil(size(cram_index_files, "GB")) +
                          ceil(size(background_cram_index_files, "GB"))
@@ -437,7 +542,7 @@ task UGPostProcessing{
 
       cp ~{write_lines(called_records)} called_records.txt
 
-      echo 'Defining filters...'
+      echo 'Defining filters...' >&2
       printf "%b\n" "LowQualInExome" \
         "QUAL < ~{min_variant_quality_exome_hmer_indels} and VARIANT_TYPE=='h-indel' and not vc.isFiltered() and vc.hasAttribute('EXOME')" \
         "LowQual" \
@@ -461,28 +566,28 @@ task UGPostProcessing{
       background=~{sep=',' background_cram_files} 
       cram_string="~{true='$foreground;$background' false='$foreground' defined_background}"
 
-      echo "Calculating approximate INDEL variant count"
+      echo "Calculating approximate INDEL variant count" >&2
       ug_postproc \
           --infile @called_records.txt \
           --ref ~{ref} \
           --outfile "~{output_prefix}.vcf.gz" \
           --qual_filter ~{qual_filter} \
-          --count_indels --group_variants false |& tee indel.count.log
+          --count_indels --group_variants false 2>&1 | tee indel.count.log >&2
 
       indel_count=$( grep indel_count indel.count.log | cut -d " " -f 4 )
-      echo "Approximate INDEL variant count: $indel_count"
+      echo "Approximate INDEL variant count: $indel_count" >&2
       if [ "$indel_count" -gt ~{indel_threshold_for_recalibration} ]
       then
-        echo "INDEL variant count is too high, skipping post-processing"
+        echo "INDEL variant count is too high, skipping post-processing" >&2
         recalibration_string=""
       else 
-        echo "INDEL variant count is low, recalibrating VAF"
+        echo "INDEL variant count is low, recalibrating VAF" >&2
         # shellcheck disable=SC2034
         recalibration_string="--fix_allele_coverage --fix_allele_indels_only --fix_allele_crams $cram_string"
       fi
      
 
-      echo 'Running UG post-processing...'
+      echo 'Running UG post-processing...' >&2
       ug_postproc \
         --infile @called_records.txt \
         --ref ~{ref} \
@@ -495,7 +600,7 @@ task UGPostProcessing{
         --qual_filter ~{qual_filter} \
         --filter \
         --filters_file filters.txt \
-        --dbsnp ~{dbsnp} \
+        ~{if defined(dbsnp) then "--dbsnp " + dbsnp else ""} \
         ~{if show_bg_fields then "--consider_bg_fields" else ""} \
         ~{if recalibrate_vaf then '$recalibration_string' else ""} \
         ~{if is_somatic then "--ignore_multi_allelic_cvos" else ""} \
@@ -511,17 +616,17 @@ task UGPostProcessing{
       touch "~{output_prefix}.g.vcf.gz.tbi"
       touch "~{output_prefix}.hcr.bed"
 
-    echo 'Saving header IDs to a file...'
-    export header_file=header.hdr
-    export id_file=header.ID
-    export all_ids=all_ids.txt
+      echo 'Saving header IDs to a file...' >&2
+      export header_file=header.hdr
+      export id_file=header.ID
+      export all_ids=all_ids.txt
 
-    for f in ~{sep=" " exome_and_annotations}
-    do
-      head -1 $f > $header_file
-      sed 's/[<>]/ /' "$header_file" | sed 's/[=]/ /' | sed 's/[=]/ /' | sed 's/[,]/ /' | awk '{print $3}' > $id_file
-      cat $id_file >> $all_ids
-    done
+      for f in ~{sep=" " exome_and_annotations}
+      do
+        head -1 $f > $header_file
+        sed 's/[<>]/ /' "$header_file" | sed 's/[=]/ /' | sed 's/[=]/ /' | sed 's/[,]/ /' | awk '{print $3}' > $id_file
+        cat $id_file >> $all_ids
+      done
 
   >>>
   runtime {
@@ -587,5 +692,96 @@ task QCReport{
     File qc_h5     = '~{output_prefix}.h5'
     File qc_report = '~{output_prefix}_report.html'
     File qc_metrics_h5 = '~{output_prefix}_metrics.h5'
+  }
+}
+
+task GenerateQuickCoverageBed {
+  input {
+    File target_intervals
+    File ref_dict
+    String docker
+    File monitoring_script
+    Int preemptible_tries
+    Int num_points = 2000
+  }
+
+  Int disk_size = 10
+
+  command <<<
+    set -xeo pipefail
+    bash ~{monitoring_script} | tee monitoring.log >&2 &
+
+    # Convert interval list to BED format
+    gatk IntervalListToBed -I ~{target_intervals} -O target_intervals.bed
+
+    # Calculate total length of intervals
+    total_length=$(awk '{sum += $3 - $2} END {printf "%.0f\n", sum}' target_intervals.bed)
+    echo "Total interval length: $total_length"
+    
+    # Calculate average distance between points
+    if [[ $total_length -eq 0 ]]; then
+      echo "Error: No intervals found"
+      exit 1
+    fi
+    
+    avg_distance=$(echo "scale=0; $total_length / ~{num_points}" | bc -l)
+    if [[ $avg_distance -eq 0 ]]; then
+      avg_distance=1
+    fi
+    echo "Average distance between points: $avg_distance"
+    
+    # Generate uniformly distributed points
+    export AVG_DISTANCE=$avg_distance
+    export NUM_POINTS=~{num_points}
+    
+    python3 << 'EOF'
+import os
+
+avg_distance = max(1, int(os.environ['AVG_DISTANCE']))
+num_points = int(os.environ['NUM_POINTS'])
+
+points_generated = 0
+with open('target_intervals.bed', 'r') as f, open('quick_coverage.bed', 'w') as out:
+    for line in f:
+        if line.strip():
+            parts = line.strip().split('\t')
+            chrom = parts[0]
+            start = int(parts[1])
+            end = int(parts[2])
+            
+            # Generate points at avg_distance intervals within this interval
+            current_pos = start
+            while current_pos < end and points_generated < num_points:
+                # Write bed format: chr start end (where start = end - 1 for single position)
+                out.write(f"{chrom}\t{current_pos}\t{current_pos + 1}\n")
+                points_generated += 1
+                current_pos += avg_distance
+            
+            if points_generated >= num_points:
+                break
+
+print(f"Generated {points_generated} coverage points")
+EOF
+
+    # Ensure we have a valid output file
+    if [[ ! -s quick_coverage.bed ]]; then
+      echo "Error: Failed to generate coverage bed file"
+      exit 1
+    fi
+    
+    echo "Successfully generated $(wc -l < quick_coverage.bed) coverage points"
+  >>>
+
+  runtime {
+    docker: docker
+    memory: "2 GB"
+    cpu: 1
+    disks: "local-disk " + disk_size + " HDD"
+    preemptible: preemptible_tries
+  }
+
+  output {
+    File quick_coverage_bed = "quick_coverage.bed"
+    File monitoring_log = "monitoring.log"
   }
 }

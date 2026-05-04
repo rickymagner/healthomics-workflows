@@ -27,6 +27,7 @@ struct References {
   File ref_fasta
   File ref_fasta_index
   File ref_dict
+  File? ref_alt
 }
 
 # BWA alignment
@@ -41,11 +42,16 @@ struct AlignmentReferences {
 }
 
 struct GiraffeReferences {
-  References references
   File ref_gbz
   File ref_dist
   File ref_min
-  File ref_path_list
+  File ref_zipcodes
+  File ref_paths
+  String prefix_to_strip
+  File? ref_hapl
+  File? ref_gbz_for_haplotypes
+  File? alignment_reference_fasta_for_haplotypes
+  File? alignment_reference_fasta_index_for_haplotypes
 }
 
 # BWA-METH alignment
@@ -55,8 +61,6 @@ struct BwaMethReferences {
 
 # UA alignment
 struct UaParameters {
-  File? ua_index
-  File? ref_alt
   String ua_extra_args
   Boolean v_aware_alignment_flag
   Int? cpus
@@ -65,9 +69,10 @@ struct UaParameters {
 
 # UA-METH alignment
 struct UaMethParameters {
-  File index_c2t
-  File index_g2a
+  String ua_extra_args
+  Boolean v_aware_alignment_flag
   Int? cpus
+  Int? memory_gb
 }
 
 struct VariantCallingSettings {
@@ -119,6 +124,8 @@ struct SimpleReadTrimmingParameters {
 
 struct TrimmerParameters {
   File? formats_description         # optional formtas.json file. If not provided, the default trimmer formats will be used (https://github.com/Ultimagen/trimmer/blob/master/formats/formats.json)
+  Array[File]? additional_format_files        # Additional format files to be used by trimmer.
+  File? ini_file                      # ini file to be used by trimmer.
   String? local_formats_description # path to description file stored in the docker, default is /trimmer/formats/formats.json
   String? untrimmed_reads_action    # either "" (do nothing), "filter" (mark in sam flag) or "discard"
   String? format                    # format name to be used, as defined in the formats.json file
@@ -156,6 +163,12 @@ struct FeatureMapParams {
   Array[String]? cram_tags_to_copy  # -c list of attributes to copy from sam to vcf
   String? attributes_prefix         # -C prefix for copied attributes
   File? bed_file                    # -b bed file containing ranges to process
+  File? read_filters                # JSON file with read filters to apply
+  Int? number_of_reads_per_var      # -l number of reads per variant to use for feature calculation
+  Int? pileup_window_width          # -w flag pileup window width
+  Boolean? somatic_filter_mode      # -F flag use somatic filter mode, meaning that only the first sample is examined for quality filter (FILT=1)
+  Boolean generate_random_sample   # Whether to generate a random sample for the featuremap
+  Float? filler_prob               # -D filler probability parameter for snvfind
 }
 
 struct SingleReadSNVParams {
@@ -164,10 +177,8 @@ struct SingleReadSNVParams {
     Float tp_train_set_size_sampling_overhead
     Int random_seed
     Int num_CV_folds
-    Int min_coverage_filter
     Float max_coverage_factor
     Float max_vaf_for_fp  # Maximum VAF for false positive filtering
-    Array[String] pre_filters  # Pre-filter configuration in format "name=X:field=Y:op=Z:value=W:type=T"
 }
 
 struct MrdAnalysisParams {
@@ -281,7 +292,6 @@ struct SorterParams {
   Int? memory_gb            # Override the default memory (in GB) used by sorter
   Int? demux_memory_gb            # Override the default memory (in GB) used by demux
   Int? demux_cpu           # Override the default cpu used by demux
-  File? coverage_intervals  # tar.gz file with the coverage intervals tsv pointing to the relevant coverage intervals files
   File? single_cell_cbc_classifier  # single cell classifier model (json)
 }
 
@@ -290,4 +300,18 @@ struct SingleCellQcThresholds {
   Int read_length
   Int fraction_below_read_length
   Int percent_aligned
+}
+
+struct FeaturemapAnnotationFiles {
+  File dbsnp
+  File dbsnp_index
+  File gnomad
+  File gnomad_index
+  File ug_hcr
+  File ug_hcr_index
+}
+
+struct SingleReadSNVModel {
+  File model_metadata           # srsnv_metadata.json
+  Array[File] model_fold_files  # 3 model_fold_*.json files
 }

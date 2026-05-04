@@ -1,4 +1,8 @@
 {
+    "SingleReadSNV.annotation_files": {
+        "description": "Annotation files for featuremap generation: dbSNP, gnomAD, and UG High Confidence Regions with their indices",
+        "optional": false
+    },
     "SingleReadSNV.base_file_name": {
         "description": "Base file name for output files. The output files will be named [base_file_name].with_ml_qual.vcf.gz",
         "optional": false
@@ -15,21 +19,21 @@
         "description": "FeatureMap parameters, recommended value set in the template.",
         "optional": false
     },
-    "SingleReadSNV.featuremap_scatter_count_override": {
-        "description": "featuremap_scatter_count_override",
-        "optional": true
-    },
     "SingleReadSNV.features": {
         "description": "Features to be used for training the SNV quality model, should match pre trained model if one is given, recommended value set in the template.",
         "optional": false
     },
-    "SingleReadSNV.input_cram_bam": {
-        "description": "Input CRAM or BAM file",
+    "SingleReadSNV.input_cram_bam_index_list": {
+        "description": "Input CRAM index file/s",
         "optional": false
     },
-    "SingleReadSNV.input_cram_bam_index": {
-        "description": "Input CRAM or BAM index file",
+    "SingleReadSNV.input_cram_bam_list": {
+        "description": "Input CRAM file/s",
         "optional": false
+    },
+    "SingleReadSNV.mean_coverage": {
+        "description": "(Optional) Mean coverage value. Provide together with total_aligned_bases and without sorter_json_stats_file_list.",
+        "optional": true
     },
     "SingleReadSNV.min_coverage_to_train_model": {
         "description": "Minimum coverage to train the ML model, needed as label assignment (true/false SNV) is unreliable at low coverages, the recommended value is set in the template",
@@ -43,45 +47,57 @@
         "description": "no_address_override",
         "optional": true
     },
-    "SingleReadSNV.pre_trained_model_files": {
-        "description": "Pre-trained ML model json files, if provided the model will be used for inference and no self-trained model will be created. Use with care, the model must be trained on the same data type with the same features",
+    "SingleReadSNV.override_memory_gb_CreateFeatureMap": {
+        "description": "Override memory in GB for the CreateFeatureMap task, default: 2 (GiB). If an out of memory error occurs in the CreateFeatureMap task, try increasing this value, e.g. double it.",
         "optional": true
     },
-    "SingleReadSNV.pre_trained_srsnv_metadata_json": {
-        "description": "Pre-trained SNV quality model metadata json file, if provided the model will be used for inference and no self-trained model will be created. Use with care, the model must be trained on the same data type with the same features",
+    "SingleReadSNV.override_memory_gb_PrepareRandomSampleFeatureMap": {
+        "description": "Override memory in GB for the PrepareRandomSampleFeatureMap task, default: 16 (GiB). If an out of memory error occurs in the PrepareRandomSampleFeatureMap task, try increasing this value, e.g. double it.",
+        "optional": true
+    },
+    "SingleReadSNV.override_memory_gb_PrepareRawFeatureMap": {
+        "description": "Override memory in GB for the PrepareRawFeatureMap task, default: 128 (GiB). If an out of memory error occurs in the PrepareRawFeatureMap task, try increasing this value, e.g. double it.",
+        "optional": true
+    },
+    "SingleReadSNV.override_memory_gb_TrainModel": {
+        "description": "Override memory in GB for the TrainModel task, default: 32 (GiB). If an out of memory error occurs in the TrainModel task, try increasing this value, e.g. double it.",
+        "optional": true
+    },
+    "SingleReadSNV.pre_trained_model_files": {
+        "description": "Pre-trained ML model json files and .srsnv_metadata.json file. if provided the model will be used for inference and no self-trained model will be created. Use with care, the model must be trained on the same data type with the same features",
         "optional": true
     },
     "SingleReadSNV.preemptible_tries": {
         "description": "preemptible_tries",
         "optional": true
     },
-    "SingleReadSNV.process_featuremap_memory_gb_override": {
-        "description": "process_featuremap_memory_gb_override",
-        "optional": true
-    },
     "SingleReadSNV.raise_exceptions_in_report": {
         "description": "Raise and exception and fail the pipeline if an error is raised in the QC report",
         "optional": true
     },
-    "SingleReadSNV.references": {
-        "description": "Reference files: fasta, dict and fai, recommended value set in the template",
-        "optional": false
+    "SingleReadSNV.random_sample_trinuc_freq": {
+        "description": "(Optional) CSV or TSV file with trinucleotide frequencies for the random sample. If provided, the random sample featuremap will be sampled according to the given trinucleotide frequency. If not provided, sampling is uniform.",
+        "optional": true
+    },
+    "SingleReadSNV.reference_genome": {
+        "description": "Genome type selector. The workflow currently supports only hg38.",
+        "optional": true
     },
     "SingleReadSNV.single_read_snv_params": {
         "description": "SingleReadSNV parameters, recommended value set in the template.",
         "optional": true
     },
-    "SingleReadSNV.sorter_json_stats_file": {
-        "description": "Sorter json stats file provided by the Ultima Genomics pipeline (same base name as the input cram/bam file with a json extension)",
-        "optional": false
-    },
-    "SingleReadSNV.training_regions_interval_list": {
-        "description": "Genomic regions to include in the training set, the recommended value is set in the template",
-        "optional": false
-    },
-    "SingleReadSNV.training_regions_interval_list_index": {
-        "description": "Index for genomic regions to exclude from the training set, the recommended value is set in the template",
+    "SingleReadSNV.sorter_json_stats_file_list": {
+        "description": "(Optional) Sorter json stats files. Provide EITHER these files OR both mean_coverage and total_aligned_bases.",
         "optional": true
+    },
+    "SingleReadSNV.total_aligned_bases": {
+        "description": "(Optional) Total aligned bases used for downsampling rate calculation. Provide together with mean_coverage and without sorter_json_stats_file_list.",
+        "optional": true
+    },
+    "SingleReadSNV.train_on_gpu": {
+        "description": "Train the ML model on GPU, default: false",
+        "optional": false
     },
     "SingleReadSNV.xgboost_params_file": {
         "description": "XGBoost parameters file for training the SNV quality model, recommended value set in the template.",

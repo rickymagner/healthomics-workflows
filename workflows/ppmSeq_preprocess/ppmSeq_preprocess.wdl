@@ -32,7 +32,7 @@ import "tasks/general_tasks.wdl" as UGGeneralTasks
 workflow ppmSeqPreprocess {
   input {
     # Workflow args
-    String pipeline_version = "1.23.2" # !UnusedDeclaration
+    String pipeline_version = "1.30.0" # !UnusedDeclaration
 
     # Data inputs
     Array[File] input_cram_bam_list
@@ -41,8 +41,8 @@ workflow ppmSeqPreprocess {
     String adapter_version
     String? ppmSeq_analysis_extra_args  # extra args for python ugvc ppmSeq_analysis
 
-    # References
-    References references
+    # Genome type selector
+    String reference_genome = "hg38"
     
     # trimmer parameters
     TrimmerParameters trimmer_parameters
@@ -70,14 +70,11 @@ workflow ppmSeqPreprocess {
     # base_file_name
     #@wv not(" " in base_file_name or "#" in base_file_name or ',' in base_file_name)
 
-    # adapter version 
+    # adapter version
     #@wv adapter_version in {"v1", "legacy_v5", "legacy_v5_start", "legacy_v5_end", "dmbl"}
 
-    # references
-    #@wv suffix(references['ref_fasta']) in {'.fasta', '.fa'}
-    #@wv suffix(references['ref_dict']) == '.dict'
-    #@wv suffix(references['ref_fasta_index']) == '.fai'
-    #@wv prefix(references['ref_fasta_index']) == references['ref_fasta']
+    # reference_genome
+    #@wv reference_genome in {"hg38"}
 
     ## Trimmer checks
     #@wv 'trim' in steps and steps['trim'] -> defined(trimmer_parameters)
@@ -85,8 +82,6 @@ workflow ppmSeqPreprocess {
 
     ## UA
     #@wv 'align' in steps and steps['align'] -> defined(ua_parameters)
-    #@wv 'align' in steps and steps['align'] and 'ua_index' in ua_parameters -> suffix(ua_parameters['ua_index']) == '.uai'
-    #@wv 'align' in steps and steps['align'] -> suffix(ua_parameters['ref_alt']) == '.alt'
 
     #@wv 'align' in steps and steps['align'] 
     #@wv 'trim' in steps and steps['trim'] 
@@ -94,7 +89,7 @@ workflow ppmSeqPreprocess {
   }
 
   meta {
-    description: "This workflow takes untrimmed ppmSeq sequencing data, trims, aligns and sorts, and generates a QC report"
+    description: "The ppmSeq Preprocess pipeline is designed to process untrimmed ppmSeq sequencing data through a complete preprocessing workflow including adapter trimming, alignment to reference genome, sorting, duplicate marking, and QC report generation. This analysis is generally done on the UG sequencer, this pipeline is intended for cases where it did not happen or was improperly configured. For more details on ppmSeq, see https://www.ultimagenomics.com/products/ppmseq-tm/ and https://www.biorxiv.org/content/10.1101/2025.08.11.669689v1. \n\nThe following input templates are available for different input data: \n\n1) `ppmSeq_preprocess_template-ppmSeq.json` | Use this template for ppmSeq data. The input CRAM file should NOT be trimmed. If it contains the ppmSeq tags (e.g. st, et), it was trimmed. \n\n2) `ppmSeq_preprocess_template-ppmSeq_legacy_v5.json` | Use this template for LEGACY v5 ppmSeq data. This is an older version of the ppmSeq adapters, generally not available since 2024. The input CRAM file should NOT be trimmed. If it contains the ppmSeq tags (e.g. as, ts), it was trimmed. \n\n3) `ppmSeq_preprocess_template-ppmSeq_post_native_adapter_trimming.json` | Use this template only for the case where the UG native adapters were trimmed, but not the ppmSeq adapters and loop. This generally happens if the application_type is configured to be 'native' instead of 'ppmSeq', can be verified by the presence of an 'a3' tag in some reads but the absence of ppmSeq tags (e.g. st, et). "
     author: "Ultima Genomics"
         WDL_AID: { exclude: [
             "pipeline_version",
@@ -144,10 +139,10 @@ workflow ppmSeqPreprocess {
       type: "String",
       category: "input_optional"
     }
-    references: {
-      help: "Reference files",
-      type: "References",
-      category: "ref_required"
+    reference_genome: {
+      help: "Genome type for resource selection (hg38)",
+      type: "String",
+      category: "input_required"
     }
     trimmer_parameters: {
       help: "Trimmer parameters",
@@ -168,6 +163,11 @@ workflow ppmSeqPreprocess {
        help: "Create md5 checksum for requested output files",
        type: "Boolean",
        category: "input_optional"
+    }
+    monitoring_script_input: {
+        help: "Monitoring script override for AWS HealthOmics workflow templates multi-region support",
+        type: "File",
+        category: "input_optional"
     }
     trimmer_histogram_csv_out: {
       help: "Trimmer histogram csv output",
@@ -255,12 +255,14 @@ workflow ppmSeqPreprocess {
   call Globals.Globals as Globals
   GlobalVariables global = Globals.global_dockers
 
+  File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])
+
   call TrimAlignSortSubWF.TrimAlignSort as TrimAlignSort {
     input:
         input_cram_bam_list = input_cram_bam_list,
         base_file_name =      base_file_name,
         steps =               steps,
-        references =          references,
+        reference_genome =         reference_genome,
         ref_fastas_cram =     ref_fastas_cram,
         trimmer_parameters =  trimmer_parameters,
         aligner =             "ua",
@@ -291,7 +293,7 @@ workflow ppmSeqPreprocess {
         base_file_name =                      base_file_name,
         ppmSeq_analysis_extra_args = ppmSeq_analysis_extra_args,
         docker =                              global.ugbio_ppmseq_docker,
-        monitoring_script =                   global.monitoring_script, # !FileCoercion
+        monitoring_script =                   monitoring_script,
   }
 
     File output_cram_bam_                 = select_first([TrimAlignSort.output_cram_bam])

@@ -37,24 +37,26 @@ import 'tasks/structs.wdl'
 import 'tasks/globals.wdl' as Globals
 import 'tasks/alignment_tasks.wdl' as AlignmentTasks
 import "tasks/general_tasks.wdl" as UGGeneralTasks
+import "tasks/genome_resources.wdl" as GenomeResourcesLib
 
 workflow SVPipeline {
     input {
         # Workflow args
-        String pipeline_version = "1.23.2" # !UnusedDeclaration
+        String pipeline_version = "1.30.0" # !UnusedDeclaration
 
         String base_file_name
         Array[File] input_germline_crams = []
         Array[File] input_germline_crams_indexes = []
         Array[File] input_tumor_crams = []
         Array[File] input_tumor_crams_indexes = []
-        References references
-        UaParameters ua_references
+        String reference_genome = "hg38"
+        UaParameters ua_parameters
         GiraffeReferences? giraffe_parameters
         File wgs_calling_interval_list
         Int min_base
         Int min_mapq
         Int max_reads_per_partition
+        Int max_reads_per_working_area
         Int? max_num_haps
         Int realign_mapq
         String? min_indel_sc_size_to_include
@@ -95,6 +97,7 @@ workflow SVPipeline {
         Boolean create_md5_checksum_outputs = false
 
         # Winval validations
+        #@wv reference_genome in {"hg38", "b37"}
         #@wv min_base >= 0
         #@wv min_mapq >= 0
         #@wv max_num_haps >= 0
@@ -151,11 +154,11 @@ workflow SVPipeline {
             "AlignWithUA.memory_gb",
             "ConvertToUbam.cache_tarball",
             "ConvertToUbam.disk_size",
-            "AlignWithGiraffe.in_prefix_to_strip",
             "SortGiraffeAlignment.disk_size",
             "SortGiraffeAlignment.gitc_path",
             "IndexGiraffeAlignment.disk_size",
-            "MergeMd5sToJson.output_json"
+            "MergeMd5sToJson.output_json",
+            "AlignWithGiraffe.threads"
             ]}
     }
     parameter_meta {
@@ -184,14 +187,14 @@ workflow SVPipeline {
             help: "Input CRAM index for the tumor (in case of matched T/N calling)",
             category: "optional"
         }
-        references: {
-            type: "References",
-            help: "Reference files: fasta, dict and fai, recommended value set in the template",
+        reference_genome: {
+            type: "String",
+            help: "Genome type selector. Supported values: hg38, b37",
             category: "required"
         }
-        ua_references: {
+        ua_parameters: {
             type: "UaParameters",
-            help: "UAReference files: ua_index, ref_alt, v_aware_alignment_flag and ua_extra_args, recommended value set in the template",
+            help: "UA parameters: v_aware_alignment_flag and ua_extra_args, recommended value set in the template",
             category: "required"
         }
         giraffe_parameters: {
@@ -243,7 +246,12 @@ workflow SVPipeline {
         max_reads_per_partition: {
             type: "Int",
             help: "Assembly parameter: Maximal number of reads that are stored in memory when analyzing an active region",
-            category:"required"
+            category:"advanced"
+        }
+        max_reads_per_working_area: {
+            type: "Int",
+            help: "Rematching parameter: Maximal number of reads that are stored in memory when rematching reads to haplotypes (similar to max_reads_per_partition in assembly)",
+            category:"advanced"
         }
         prefilter_query: {
             type: "String",
@@ -372,6 +380,11 @@ workflow SVPipeline {
            type: "Boolean",
            category: "input_optional"
         }
+        monitoring_script_input: {
+            help: "Monitoring script override for AWS HealthOmics workflow templates multi-region support",
+            type: "File",
+            category: "input_optional"
+        }
         output_vcf: {
             type: "File",
             help: "Final VCF",
@@ -443,6 +456,17 @@ workflow SVPipeline {
 
     call Globals.Globals as Glob
     GlobalVariables global = Glob.global_dockers
+
+    # Get genome resources based on reference_genome
+    call GenomeResourcesLib.GenomeResourcesWorkflow as GenomeResources
+
+    # Construct References struct from genome resources for tasks that still need it
+    References references = object {
+        ref_fasta: GenomeResources.resources[reference_genome].ref_fasta,
+        ref_fasta_index: GenomeResources.resources[reference_genome].ref_fasta_index,
+        ref_dict: GenomeResources.resources[reference_genome].ref_dict,
+        ref_alt: GenomeResources.resources[reference_genome].ref_alt
+    }
 
     File monitoring_script = select_first([monitoring_script_input, global.monitoring_script])
     Boolean is_aws = if(defined(cloud_provider_override) && select_first([cloud_provider_override]) == "aws") then true else false
@@ -526,13 +550,13 @@ workflow SVPipeline {
             input:
                 input_bams = CreateAssembly.assembly,
                 output_bam_basename = base_file_name +"_assembly_file_ua_aligned",
-                ua_index = select_first([ua_references.ua_index]),
-                ref_alt = ua_references.ref_alt,
+                ua_index = GenomeResources.resources[reference_genome].ua_index,
+                ref_alt = GenomeResources.resources[reference_genome].ref_alt,
                 monitoring_script = monitoring_script,
                 preemptible_tries = preemptibles,
                 ua_docker = global.ua_docker,
-                extra_args = ua_references.ua_extra_args,
-                use_v_aware_alignment =  ua_references.v_aware_alignment_flag,
+                extra_args = ua_parameters.ua_extra_args,
+                use_v_aware_alignment = ua_parameters.v_aware_alignment_flag,
                 no_address = no_address
         }
 
@@ -541,7 +565,7 @@ workflow SVPipeline {
     if(run_giraffe){
         call AlignmentTasks.ConvertCramOrBamToUBam as ConvertToUbam {
             input:
-                monitoring_script = global.monitoring_script, # !FileCoercion
+                monitoring_script = monitoring_script,
                 input_file = MergeBams.output_bam,
                 base_file_name = base_file_name,
                 preemptible_tries = preemptibles,
@@ -553,6 +577,7 @@ workflow SVPipeline {
             input:
                 input_bam = ConvertToUbam.unmapped_bam,
                 output_bam_basename = base_file_name,
+                references = references,
                 giraffe_references = select_first([giraffe_parameters]),
                 monitoring_script = monitoring_script,
                 preemptible_tries = preemptibles,
@@ -587,7 +612,9 @@ workflow SVPipeline {
 
     }
 
+    # Find for each read the best haplotype that it matches to. 
     scatter (interval in ScatterIntervalList.out) {
+        # First we do this in chunks
         call MatchReadsToHaplotypes {
             input: 
                 germline_reads = input_germline_crams,
@@ -601,6 +628,7 @@ workflow SVPipeline {
                 min_indel_sc_size_to_include = min_indel_sc_size_to_include,
                 min_mismatch_count_to_include = min_mismatch_count_to_include,
                 min_mapq = min_mapq,
+                max_reads_per_working_area = max_reads_per_working_area,
                 number_of_shards = ScatterIntervalList.interval_count,
                 rematching_interval = interval,
                 reference = references,
@@ -613,11 +641,23 @@ workflow SVPipeline {
         }
     }
 
-    call MergeMatchedReads {
+    # combine the chunks, choosing best scoring assignment for read per chunk and sorting by haplotype
+    call MergeMatchReadsFiles {
+        input:
+            matched_reads_files = MatchReadsToHaplotypes.read_haplotype_assignment,
+            base_file_name = base_file_name,
+            docker = global.ubuntu_docker,
+            monitoring_script = monitoring_script,
+            preemptible_tries = preemptibles,
+            no_address = no_address 
+    }
+
+    # add the information into  the assembly BAM
+    call MergeMatchedReadsIntoAssembly {
         input:
             assembly_bam = LongHomopolymersAlignment.realigned_assembly,
             assembly_bam_index = LongHomopolymersAlignment.realigned_assembly_index,
-            matched_reads_files = MatchReadsToHaplotypes.read_haplotype_assignment,
+            matched_reads = MergeMatchReadsFiles.read_haplotype_assignment,
             base_file_name = base_file_name,
             reference = references,
             docker = global.rematching_docker,
@@ -626,8 +666,8 @@ workflow SVPipeline {
             no_address = no_address 
     }
 
-    File assembly_file = MergeMatchedReads.updated_assembly
-    File assembly_file_index = MergeMatchedReads.updated_assembly_index
+    File assembly_file = MergeMatchedReadsIntoAssembly.updated_assembly
+    File assembly_file_index = MergeMatchedReadsIntoAssembly.updated_assembly_index
 
     call IdentifyVariants {
         input:
@@ -750,7 +790,8 @@ workflow SVPipeline {
                 cloud_provider_override = cloud_provider_override,
                 preemptible_tries = preemptibles,
                 monitoring_script = monitoring_script,
-                no_address = no_address
+                no_address = no_address,
+                memory_override = annotate_variants_memory_override
             }
     }
 
@@ -931,6 +972,8 @@ task CreateAssembly {
             --bed interval.bed \
             --min-base ~{min_base} \
             --min-mapq ~{min_mapq} \
+            --median-coverage 1 \
+            --background-median-coverage 1 \
             --max-reads-per-region ~{max_reads_per_partition} \
             ~{"--min-feature-length '" + min_sc_indel_size + "'"} \
             ~{"--min-mismatch-count '" + min_mismatch_count + "'"} \
@@ -945,9 +988,10 @@ task CreateAssembly {
             then
                 gatk --java-options "-Xms2G" PrintReads \
                 -I ~{sep=' -I ' input_germline_crams} \
-                -O input_germline.cram \
+                -O /dev/stdout  \
                 -L ~{interval} \
-                -R ~{references.ref_fasta}
+                -R ~{references.ref_fasta} | \
+                samtools view -C -T ~{references.ref_fasta} -o input_germline.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_germline.cram
             fi
@@ -956,9 +1000,10 @@ task CreateAssembly {
             then
                 gatk --java-options "-Xms2G" PrintReads \
                 -I ~{sep=' -I ' input_tumor_crams} \
-                -O input_tumor.cram \
+                -O /dev/stdout \
                 -L ~{interval} \
-                -R ~{references.ref_fasta}
+                -R ~{references.ref_fasta} | \
+                samtools view -C -T ~{references.ref_fasta} -o input_tumor.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_tumor.cram
             fi
@@ -972,6 +1017,8 @@ task CreateAssembly {
             --bed interval.bed \
             --min-base ~{min_base} \
             --min-mapq ~{min_mapq} \
+            --median-coverage 1 \
+            --background-median-coverage 1 \
             --max-reads-per-region ~{max_reads_per_partition} \
             ~{"--min-feature-length '" + min_sc_indel_size + "'"} \
             ~{"--min-mismatch-count '" + min_mismatch_count + "'"} \
@@ -1104,6 +1151,7 @@ task LongHomopolymersAlignment {
             File realigned_assembly_index = "~{output_bam_basename}.bam.bai"
         }
 }
+
 task MatchReadsToHaplotypes {
     input {
         References reference
@@ -1114,6 +1162,7 @@ task MatchReadsToHaplotypes {
         Array[File] germline_reads
         Array[File] germline_reads_indexes
         Boolean is_somatic
+        Int max_reads_per_working_area
         String? min_indel_sc_size_to_include
         String? min_mismatch_count_to_include
         Int min_mapq
@@ -1159,10 +1208,11 @@ task MatchReadsToHaplotypes {
             echo $input_string
 
             sv_rematch -b interval.bed \
-            -j 2 -t -a \
+            -j 2 -t -a -v \
             -l '~{min_indel_sc_size_to_include}' \
             -s '~{min_mismatch_count_to_include}' \
             -m ~{min_mapq} \
+            -L ~{max_reads_per_working_area} \
             $input_string \
             ~{assembly_bam} \
             ~{reference.ref_fasta} \
@@ -1173,9 +1223,10 @@ task MatchReadsToHaplotypes {
             then
                 gatk --java-options "-Xms2G" PrintReads \
                 -I ~{sep=' -I ' germline_reads} \
-                -O input_germline.cram \
+                -O /dev/stdout \
                 -L ~{rematching_interval} \
-                -R ~{reference.ref_fasta}
+                -R ~{reference.ref_fasta} | \
+                samtools view -C -T ~{reference.ref_fasta} -o input_germline.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_germline.cram
             fi
@@ -1184,23 +1235,26 @@ task MatchReadsToHaplotypes {
             then
                 gatk --java-options "-Xms2G" PrintReads \
                 -I ~{sep=' -I ' tumor_reads} \
-                -O input_tumor.cram \
+                -O /dev/stdout \
                 -L ~{rematching_interval} \
-                -R ~{reference.ref_fasta}
+                -R ~{reference.ref_fasta} | \
+                samtools view -C -T ~{reference.ref_fasta} -o input_tumor.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_tumor.cram
             fi
 
             sv_rematch -b interval.bed \
-            -j 2 -t -a \
+            -j 2 -t -a -v \
             ~{"-l '" + min_indel_sc_size_to_include + "'"} \
             ~{"-s '" + min_mismatch_count_to_include + "'"} \
             -m ~{min_mapq} \
+            -L ~{max_reads_per_working_area} \
             ~{if is_somatic then (if defined_germline then "input_tumor.cram\\;input_germline.cram" else "input_tumor.cram") else "input_germline.cram"} \
             ~{assembly_bam} \
             ~{reference.ref_fasta} \
             ~{base_file_name}_rematched_hap.txt
         fi
+
     >>>
 
     parameter_meta {
@@ -1225,9 +1279,44 @@ task MatchReadsToHaplotypes {
     }
 }
 
-task MergeMatchedReads { 
+task MergeMatchReadsFiles { 
     input {
         Array[File] matched_reads_files
+        String base_file_name
+        String docker
+        File monitoring_script
+        Int preemptible_tries
+        Boolean no_address
+    }
+    
+    Int disk_size = ceil(4*size(matched_reads_files,"GB")) + 10
+
+    command <<<
+        set -o pipefail
+        set -ex
+        bash ~{monitoring_script} | tee monitoring.log >&2 &
+        
+        # sort by read name, choose the best score, then sort by haplotype
+        LC_ALL=C sort -T "." -m -k1,1 -k3,3rn ~{sep=' ' matched_reads_files} | awk '$1 != prev { print; prev = $1 }'  | sort -T "." -k2,2 > ~{base_file_name}.all_matches_by_hap.txt
+    >>>
+
+    runtime {
+        memory: "4 GiB"
+        cpu: 2
+        disks: "local-disk " + disk_size + " HDD"
+        docker: docker
+        preemptible: preemptible_tries
+        noAddress: no_address   
+    }    
+    output {
+        File monitoring_log = "monitoring.log"
+        File read_haplotype_assignment = "~{base_file_name}.all_matches_by_hap.txt" 
+    }
+}
+
+task MergeMatchedReadsIntoAssembly { 
+    input {
+        File matched_reads
         File assembly_bam
         File assembly_bam_index
         References reference
@@ -1237,17 +1326,19 @@ task MergeMatchedReads {
         Int preemptible_tries
         Boolean no_address
     }
-    Int disk_size = ceil(2*size(matched_reads_files,"GB") + 2*size(assembly_bam,"GB")) + 10
+    Int disk_size = ceil(2*size(matched_reads,"GB") + 4*size(assembly_bam,"GB")) + 10
     command <<< 
         set -o pipefail
         set -ex
         bash ~{monitoring_script} | tee monitoring.log >&2 &
 
-        cat ~{sep=' ' matched_reads_files} > all_matches.txt
-        sv_rematch -M all_matches.txt \
-            ~{assembly_bam} \
+        samtools sort -N ~{assembly_bam} -o assembly_name_sorted.bam
+        sv_rematch -v -S -M ~{matched_reads} \
+            assembly_name_sorted.bam \
             ~{reference.ref_fasta} \
-            ~{base_file_name}_assembly.support.bam
+            ~{base_file_name}_assembly.support.name_sorted.bam
+
+        samtools sort ~{base_file_name}_assembly.support.name_sorted.bam -o ~{base_file_name}_assembly.support.bam
         samtools index ~{base_file_name}_assembly.support.bam
     >>> 
     runtime {
@@ -1462,15 +1553,14 @@ task AnnotateVariants {
             size(assembly,"GB")/number_of_shards + size(references.ref_fasta,"GB")) + 10
     Boolean is_aws = if(defined(cloud_provider_override) && select_first([cloud_provider_override]) == "aws") then true else false
     Boolean defined_germline = if(length(input_germline_crams)>0) then true else false
-    Int cpu = select_first([cpu_override, if(is_aws) then 8 else 1])
-    Int mem = select_first([memory_override, if(!is_aws) then 32 else if(!is_somatic) then 64 else 128])
+    Int cpu = select_first([ cpu_override, if(is_aws) then 2 else 1])
+    Int mem = select_first([ memory_override, if(!is_somatic) then 8 else 128 ])
     # variables for metrics files reordering
     Boolean defined_germline_metrics = if(defined(germline_metrics)) then true else false
     Boolean defined_tumor_metrics = if(defined(tumor_metrics)) then true else false
     Boolean defined_assembly_metrics = if(defined(assembly_metrics)) then true else false
 
     command <<<
-        find
         set -o pipefail
         set -o xtrace
         set -e
@@ -1543,7 +1633,7 @@ task AnnotateVariants {
             echo $input_germline_crams_string
 
 
-            java -Xmx~{mem-2}g -cp /opt/gridss/gridss--gridss-jar-with-dependencies.jar gridss.AnnotateVariants \
+            java -Xmx~{mem-4}g -Xms~{mem/2}g -cp /opt/gridss/gridss--gridss-jar-with-dependencies.jar gridss.AnnotateVariants \
                 INPUT_VCF=~{input_vcf} \
                 R=~{references.ref_fasta} \
                 $input_tumor_crams_string \
@@ -1552,7 +1642,7 @@ task AnnotateVariants {
                 C=gridss.config \
                 ASSEMBLY=~{assembly} \
                 OUTPUT_VCF=~{output_vcf_prefix}.ann.vcf \
-                THREADS=~{cpu}
+                THREADS=1
 
         else
             # convert interval list to bed file
@@ -1569,9 +1659,10 @@ task AnnotateVariants {
                 gatk  \
                     PrintReads \
                 -I ~{sep=' -I ' input_tumor_crams} \
-                -O input_tumor.cram \
+                -O /dev/stdout \
                 -L ~{interval} \
-                -R ~{references.ref_fasta}
+                -R ~{references.ref_fasta} | \
+                samtools view -C -T ~{references.ref_fasta} -o input_tumor.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_tumor.cram
             fi
@@ -1581,9 +1672,10 @@ task AnnotateVariants {
                 gatk  \
                     PrintReads \
                 -I ~{sep=' -I ' input_germline_crams} \
-                -O input_germline.cram \
+                -O /dev/stdout \
                 -L ~{interval} \
-                -R ~{references.ref_fasta}
+                -R ~{references.ref_fasta} | \
+                samtools view -C -T ~{references.ref_fasta} -o input_germline.cram --output-fmt-option embed_ref=1 -
 
                 samtools index input_germline.cram
             fi
@@ -1591,13 +1683,14 @@ task AnnotateVariants {
         gatk \
             PrintReads \
           -I ~{assembly} \
-          -O assembly_partial.cram \
+          -O /dev/stdout \
           -L ~{interval} \
-          -R ~{references.ref_fasta}
+          -R ~{references.ref_fasta} | \
+            samtools view -C -T ~{references.ref_fasta} -o assembly_partial.cram --output-fmt-option embed_ref=1 -
 
         samtools index assembly_partial.cram
 
-            java -Xmx~{mem-2}g -cp /opt/gridss/gridss--gridss-jar-with-dependencies.jar gridss.AnnotateVariants \
+            java -Xmx~{mem-4}g -Xms~{mem/2}g -cp /opt/gridss/gridss--gridss-jar-with-dependencies.jar gridss.AnnotateVariants \
             INPUT_VCF=$input_vcf \
             R=~{references.ref_fasta} \
             ~{if is_somatic then "I=input_tumor.cram" else ""} \
@@ -1606,7 +1699,7 @@ task AnnotateVariants {
             C=gridss.config \
             ASSEMBLY=assembly_partial.cram \
             OUTPUT_VCF=~{output_vcf_prefix}.ann.vcf \
-            THREADS=~{cpu}
+            THREADS=1
         fi
     >>>
     parameter_meta {
