@@ -23,10 +23,10 @@ workflow GenomeResourcesWorkflow {
 },
       "hg38": {
         "efficient_dv_target_intervals": "s3://ultimagen-workflow-resources-us-east-1/hg38/v0/wgs_calling_regions.hg38.interval_list",
-        "exome_intervals": "s3://ultimagen-workflow-resources-us-east-1/hg38/annotation_intervals/exome.twist.bed",
-        "ref_dict": "s3://ultimagen-workflow-resources-us-east-1/hg38/v0/Homo_sapiens_assembly38.dict",
-        "ref_fasta": "s3://ultimagen-workflow-resources-us-east-1/hg38/v0/Homo_sapiens_assembly38.fasta",
-        "ref_fasta_index": "s3://ultimagen-workflow-resources-us-east-1/hg38/v0/Homo_sapiens_assembly38.fasta.fai"
+        "exome_intervals": "gs://fc-98d018dd-cb9a-4396-8a7b-81e9b65f0c91/hg38_exome_v2.0.2_targets_sorted_validated.re_annotated.bed",
+        "ref_dict": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dict",
+        "ref_fasta": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta",
+        "ref_fasta_index": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai"
 },
       "hg38_nist_v3": {
         "efficient_dv_target_intervals": "s3://ultimagen-workflow-resources-us-east-1/hg38/v3/wgs_calling_regions.hg38.interval_list",
